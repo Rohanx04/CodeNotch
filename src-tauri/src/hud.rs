@@ -1,8 +1,15 @@
-//! The HUD window controller: collapsed/expanded state and where it sits.
+//! The HUD window controller: what size the notch is and where it sits.
 //!
 //! All sizing and positioning goes through here so there is exactly one place
 //! that decides how big the notch is and one call that moves it — which is what
 //! keeps the "never steal focus" guarantee honest.
+//!
+//! Hover is driven from the cursor position rather than from the webview's own
+//! mouse events. It has to be: while the notch is resting it carries
+//! `WS_EX_TRANSPARENT` so clicks fall through to whatever is underneath, and a
+//! click-through window receives no mouse messages at all — not even
+//! `mouseenter`. Polling `GetCursorPos` is what lets the notch be both
+//! click-through *and* hoverable.
 
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -11,39 +18,46 @@ use anyhow::Result;
 use serde::Serialize;
 use tauri::{Emitter, WebviewWindow};
 
-use codenotch_core::config::Config;
+use codenotch_core::config::{Config, Edge, HudMetrics, MonitorChoice};
 use codenotch_core::layout::{hud_extent, Placement};
 
 use crate::platform::{self, Backdrop, WindowHandle};
 
-/// Event name the webview listens on for expand/collapse changes.
+/// Event name the webview listens on for open/close changes.
 pub const HUD_STATE_EVENT: &str = "codenotch://hud-state";
 
 /// What the frontend needs to know about the window's own state.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HudState {
-    pub expanded: bool,
+    /// A detail popover is open, so the window has grown inward to hold it.
+    pub open: bool,
     pub pinned: bool,
     pub hidden: bool,
     /// True while a temporary attention peek is showing.
     pub peeking: bool,
+    /// Logical size of the window, so the webview can place the strip within it.
+    pub width: f64,
+    pub height: f64,
 }
 
 struct Inner {
     config: Config,
+    /// Cursor is over the notch (or over the popover it opened).
     hovering: bool,
     pinned: bool,
     peek_until: Option<Instant>,
-    /// Content height measured by the webview, in logical pixels.
-    content_height: Option<f64>,
+    /// Number of rings to make room for.
+    providers: usize,
+    /// Logical content size the webview measured.
+    content: Option<(f64, f64)>,
     last_placement: Option<Placement>,
     last_state: Option<HudState>,
 }
 
 impl Inner {
-    /// Expanded when anything is asking for it.
-    fn expanded(&self) -> bool {
+    /// Open when anything is asking for it.
+    fn open(&self) -> bool {
         if self.config.hidden {
             return false;
         }
@@ -53,13 +67,19 @@ impl Inner {
             || self.peek_until.is_some_and(|t| Instant::now() < t)
     }
 
-    fn state(&self) -> HudState {
-        HudState {
-            expanded: self.expanded(),
-            pinned: self.pinned,
-            hidden: self.config.hidden,
-            peeking: self.peek_until.is_some_and(|t| Instant::now() < t),
-        }
+    fn metrics(&self) -> HudMetrics {
+        self.config.metrics()
+    }
+
+    /// Logical window size for the current state.
+    fn extent(&self) -> (f64, f64) {
+        hud_extent(
+            self.metrics(),
+            self.config.edge,
+            self.providers,
+            self.open(),
+            self.content,
+        )
     }
 }
 
@@ -78,7 +98,8 @@ impl Hud {
                 hovering: false,
                 pinned: false,
                 peek_until: None,
-                content_height: None,
+                providers: 0,
+                content: None,
                 last_placement: None,
                 last_state: None,
             }),
@@ -91,6 +112,10 @@ impl Hud {
 
     pub fn config(&self) -> Config {
         self.inner.lock().expect("hud lock").config.clone()
+    }
+
+    pub fn metrics(&self) -> HudMetrics {
+        self.inner.lock().expect("hud lock").metrics()
     }
 
     /// Native handle, or `None` if the window has already gone away.
@@ -128,18 +153,20 @@ impl Hud {
 
     /// Recompute size/position and push the state to the webview.
     pub fn apply(&self) -> Result<()> {
-        let (config, expanded, content_height, state, changed) = {
+        let (config, open, state, changed) = {
             let mut inner = self.inner.lock().expect("hud lock");
-            let state = inner.state();
+            let (width, height) = inner.extent();
+            let state = HudState {
+                open: inner.open(),
+                pinned: inner.pinned,
+                hidden: inner.config.hidden,
+                peeking: inner.peek_until.is_some_and(|t| Instant::now() < t),
+                width,
+                height,
+            };
             let changed = inner.last_state.as_ref() != Some(&state);
             inner.last_state = Some(state.clone());
-            (
-                inner.config.clone(),
-                state.expanded,
-                inner.content_height,
-                state,
-                changed,
-            )
+            (inner.config.clone(), state.open, state, changed)
         };
 
         if config.hidden {
@@ -154,16 +181,15 @@ impl Hud {
             return Ok(());
         };
 
-        let (width, height) = hud_extent(config.metrics(), expanded, content_height);
-        let monitor = match config.monitor {
-            codenotch_core::config::MonitorChoice::Primary => None,
-            codenotch_core::config::MonitorChoice::Index(i) => Some(i),
-        };
-
-        // Clicks only pass through while the pill is resting; an expanded card
-        // has buttons on it.
-        let click_through = !expanded && config.click_through_when_collapsed;
+        // Clicks only pass through while the notch is resting; an open popover
+        // has things on it to click.
+        let click_through = !open && config.click_through_when_collapsed;
         platform::set_click_through(handle, click_through)?;
+
+        let monitor = match config.monitor {
+            MonitorChoice::Primary => None,
+            MonitorChoice::Index(i) => Some(i),
+        };
 
         let placement = platform::dock(
             handle,
@@ -171,8 +197,8 @@ impl Hud {
             config.edge,
             config.edge_offset,
             config.margin,
-            width,
-            height,
+            state.width,
+            state.height,
         )?;
 
         // On non-Windows the platform layer is a no-op, so drive Tauri directly
@@ -198,7 +224,7 @@ impl Hud {
         Ok(())
     }
 
-    /// Pointer entered or left the window.
+    /// Pointer entered or left the notch.
     pub fn set_hover(&self, hovering: bool) -> Result<()> {
         {
             let mut inner = self.inner.lock().expect("hud lock");
@@ -214,21 +240,32 @@ impl Hud {
         self.apply()
     }
 
-    /// Record the height the webview measured for the expanded card.
-    pub fn set_content_height(&self, height: f64) -> Result<()> {
+    /// Record the size the webview measured for its content.
+    pub fn set_content_size(&self, width: f64, height: f64) -> Result<()> {
         {
             let mut inner = self.inner.lock().expect("hud lock");
             // Ignore sub-pixel churn; every change costs a SetWindowPos.
             if inner
-                .content_height
-                .is_some_and(|h| (h - height).abs() < 1.0)
+                .content
+                .is_some_and(|(w, h)| (w - width).abs() < 1.0 && (h - height).abs() < 1.0)
             {
                 return Ok(());
             }
-            inner.content_height = Some(height);
-            if !inner.expanded() {
+            inner.content = Some((width, height));
+        }
+        self.apply()
+    }
+
+    /// How many rings the strip has to hold.
+    pub fn set_provider_count(&self, providers: usize) -> Result<()> {
+        {
+            let mut inner = self.inner.lock().expect("hud lock");
+            if inner.providers == providers {
                 return Ok(());
             }
+            inner.providers = providers;
+            // The measured size belongs to the old ring count.
+            inner.content = None;
         }
         self.apply()
     }
@@ -244,7 +281,7 @@ impl Hud {
         Ok(pinned)
     }
 
-    /// Briefly show the expanded card, for when an agent needs attention.
+    /// Briefly open the notch, for when an agent needs attention.
     ///
     /// The macOS original's rationale applies: a peek is useless behind a
     /// full-screen window, so it is time-boxed and always cancellable.
@@ -264,11 +301,56 @@ impl Hud {
         self.apply()
     }
 
-    /// Called from the poll loop: expire peeks and keep the window on top.
+    /// The rectangle the cursor has to be inside for the notch to open.
+    ///
+    /// While resting that is the strip itself. While open it is the whole
+    /// window, so moving from a ring onto its popover doesn't close it.
+    fn hover_rect(&self) -> Option<Placement> {
+        let inner = self.inner.lock().expect("hud lock");
+        let placement = inner.last_placement?;
+        if inner.open() {
+            return Some(placement);
+        }
+
+        // Resting: the window is already strip-sized, so it is the rect.
+        Some(placement)
+    }
+
+    /// Poll the cursor and open or close the notch to match.
+    ///
+    /// Returns true when the hover state changed.
+    fn poll_cursor(&self) -> Result<bool> {
+        let Some((x, y)) = platform::cursor_pos() else {
+            // No cursor source (non-Windows): the webview's own mouse events
+            // drive hover instead.
+            return Ok(false);
+        };
+        let Some(rect) = self.hover_rect() else {
+            return Ok(false);
+        };
+
+        let inside =
+            x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height;
+
+        let changed = {
+            let inner = self.inner.lock().expect("hud lock");
+            inner.hovering != inside
+        };
+        if changed {
+            self.set_hover(inside)?;
+        }
+        Ok(changed)
+    }
+
+    /// Called from the poll loop: track the cursor, expire peeks, stay on top.
     ///
     /// The topmost re-assert matters because other always-on-top windows (and
     /// apps going full-screen) can quietly push us down the z-order.
     pub fn tick(&self) -> Result<()> {
+        if self.config().hidden {
+            return Ok(());
+        }
+
         let expired = {
             let mut inner = self.inner.lock().expect("hud lock");
             match inner.peek_until {
@@ -280,12 +362,12 @@ impl Hud {
             }
         };
 
-        if expired {
+        let moved = self.poll_cursor()?;
+
+        if expired && !moved {
             self.apply()?;
         } else if let Some(handle) = self.handle() {
-            if !self.config().hidden {
-                let _ = platform::set_topmost(handle);
-            }
+            let _ = platform::set_topmost(handle);
         }
         Ok(())
     }
@@ -296,6 +378,10 @@ impl Hud {
         {
             let mut inner = self.inner.lock().expect("hud lock");
             accent_changed = inner.config.accent_hex() != config.accent_hex();
+            // Size and edge changes invalidate what the webview measured.
+            if inner.config.size != config.size || inner.config.edge != config.edge {
+                inner.content = None;
+            }
             inner.config = config.clone();
         }
 
@@ -314,7 +400,21 @@ impl Hud {
     }
 
     pub fn state(&self) -> HudState {
-        self.inner.lock().expect("hud lock").state()
+        let inner = self.inner.lock().expect("hud lock");
+        let (width, height) = inner.extent();
+        HudState {
+            open: inner.open(),
+            pinned: inner.pinned,
+            hidden: inner.config.hidden,
+            peeking: inner.peek_until.is_some_and(|t| Instant::now() < t),
+            width,
+            height,
+        }
+    }
+
+    /// Which edge the strip is docked to, for the webview's own layout.
+    pub fn edge(&self) -> Edge {
+        self.inner.lock().expect("hud lock").config.edge
     }
 
     /// Show/hide without discarding the rest of the configuration.

@@ -1,6 +1,12 @@
 /** Small formatting helpers shared by the pill and the expanded card. */
 
-import type { Activity, Health, UsageUnit, UsageWindow } from "../types";
+import type {
+  Activity,
+  Health,
+  ProviderSnapshot,
+  UsageUnit,
+  UsageWindow,
+} from "../types";
 
 /** "42%" — or "—" when there is no percentage to show. */
 export function formatPct(pct: number | null | undefined): string {
@@ -139,14 +145,28 @@ export function activityLabel(activity: Activity): string | null {
 }
 
 /**
- * Ring colour for a utilisation level.
+ * Traffic-light bucket for a utilisation level.
  *
  * Deliberately not a smooth gradient: the point is that a glance tells you
- * which of three buckets you're in.
+ * which of three buckets you're in, without reading the number.
  */
-export function usageTone(pct: number | null): "accent" | "warn" | "danger" {
-  if (pct === null) return "accent";
-  if (pct >= 90) return "danger";
-  if (pct >= 70) return "warn";
-  return "accent";
+export function usageTone(pct: number | null): "low" | "mid" | "high" {
+  if (pct === null) return "low";
+  if (pct >= 70) return "high";
+  if (pct >= 40) return "mid";
+  return "low";
+}
+
+/**
+ * The highest utilisation across a provider's quota windows.
+ *
+ * Mirrors `ProviderSnapshot::peak_pct` in Rust: informational windows are
+ * context, not consumption, so they never drive the ring.
+ */
+export function peakOf(provider: ProviderSnapshot): number | null {
+  const quota = provider.windows
+    .filter((w) => !w.informational)
+    .map((w) => w.usedPct)
+    .filter((p): p is number => p !== null);
+  return quota.length > 0 ? Math.max(...quota) : null;
 }

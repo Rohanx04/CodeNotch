@@ -71,6 +71,15 @@ async fn run_once(app: &AppHandle) {
         let _ = state.hud.peek(Duration::from_secs(peek_secs));
     }
 
+    // The strip is one ring per provider that has something to say, so its
+    // length follows the collection rather than a fixed guess.
+    let rings = telemetry
+        .providers
+        .iter()
+        .filter(|p| p.health != codenotch_core::Health::Unavailable)
+        .count();
+    let _ = state.hud.set_provider_count(rings);
+
     if let Ok(mut latest) = state.latest.lock() {
         *latest = telemetry.clone();
     }

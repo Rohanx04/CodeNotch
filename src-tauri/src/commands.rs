@@ -7,7 +7,7 @@ use serde::Serialize;
 use tauri::{Emitter, Manager, State};
 use tokio::sync::Mutex as AsyncMutex;
 
-use codenotch_core::config::Config;
+use codenotch_core::config::{Config, Edge, HudMetrics};
 use codenotch_core::model::{ProviderId, Telemetry};
 use codenotch_core::Collector;
 
@@ -35,6 +35,10 @@ pub struct Bootstrap {
     pub config: Config,
     pub telemetry: Telemetry,
     pub hud: HudState,
+    /// Strip and popover dimensions, so the webview draws to the same numbers
+    /// the window is sized with rather than its own copy of them.
+    pub metrics: HudMetrics,
+    pub edge: Edge,
     pub version: String,
     /// False on non-Windows dev builds, where the Win32 layer is a no-op.
     pub native_window: bool,
@@ -49,6 +53,8 @@ pub fn hud_ready(state: State<'_, AppState>) -> Result<Bootstrap, String> {
         config: state.hud.config(),
         telemetry: state.latest.lock().map_err(|e| e.to_string())?.clone(),
         hud: state.hud.state(),
+        metrics: state.hud.metrics(),
+        edge: state.hud.edge(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         native_window: cfg!(windows),
     })
@@ -60,12 +66,16 @@ pub fn hud_hover(hovering: bool, state: State<'_, AppState>) -> Result<(), Strin
     state.hud.set_hover(hovering).map_err(|e| e.to_string())
 }
 
-/// The webview measured its expanded content.
+/// The webview measured its laid-out content.
 #[tauri::command]
-pub fn hud_set_content_height(height: f64, state: State<'_, AppState>) -> Result<(), String> {
+pub fn hud_set_content_size(
+    width: f64,
+    height: f64,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     state
         .hud
-        .set_content_height(height)
+        .set_content_size(width, height)
         .map_err(|e| e.to_string())
 }
 

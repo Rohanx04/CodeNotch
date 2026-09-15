@@ -92,3 +92,8 @@ pub fn set_launch_at_login(_enabled: bool) -> Result<()> {
 }
 
 pub fn refresh_frame(_handle: WindowHandle) {}
+
+/// No cursor to report; the stub relies on the webview's own hover events.
+pub fn cursor_pos() -> Option<(i32, i32)> {
+    None
+}
