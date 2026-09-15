@@ -27,7 +27,7 @@ pub fn move_no_activate(_handle: WindowHandle, _placement: Placement) -> Result<
     Ok(())
 }
 
-pub fn apply_appearance(_handle: WindowHandle, _backdrop: Backdrop, _accent: Option<u32>) {}
+pub fn apply_appearance(_handle: WindowHandle, _backdrop: Backdrop) {}
 
 pub fn swap_rgb(rgb: u32) -> u32 {
     let r = (rgb >> 16) & 0xFF;

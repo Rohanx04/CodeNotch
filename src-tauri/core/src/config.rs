@@ -51,7 +51,8 @@ pub struct HudMetrics {
     pub strip_thickness: f64,
     /// Space one provider occupies along the strip: ring, percentage, gap.
     pub slot: f64,
-    /// Padding at each end of the strip.
+    /// Depth of the concave scoop at each end, which is also the padding the
+    /// rings need to clear: the strip tapers to nothing across it.
     pub strip_padding: f64,
     /// Diameter of a provider's ring.
     pub ring: f64,
@@ -77,24 +78,24 @@ impl HudSize {
         match self {
             HudSize::Small => HudMetrics {
                 strip_thickness: 78.0,
-                slot: 82.0,
-                strip_padding: 14.0,
-                ring: 46.0,
+                slot: 96.0,
+                strip_padding: 54.0,
+                ring: 48.0,
                 popover_size: 276.0,
                 popover_gap: 10.0,
             },
             HudSize::Medium => HudMetrics {
                 strip_thickness: 92.0,
-                slot: 96.0,
-                strip_padding: 18.0,
+                slot: 112.0,
+                strip_padding: 64.0,
                 ring: 56.0,
                 popover_size: 320.0,
                 popover_gap: 12.0,
             },
             HudSize::Large => HudMetrics {
                 strip_thickness: 108.0,
-                slot: 112.0,
-                strip_padding: 22.0,
+                slot: 130.0,
+                strip_padding: 76.0,
                 ring: 66.0,
                 popover_size: 368.0,
                 popover_gap: 14.0,
@@ -122,6 +123,8 @@ pub struct PollConfig {
     pub cursor_secs: u64,
     pub copilot_secs: u64,
     pub codex_secs: u64,
+    pub gemini_secs: u64,
+    pub perplexity_secs: u64,
     pub ollama_secs: u64,
     /// Cheap local file-watch pass that drives the activity ring between polls.
     pub activity_secs: u64,
@@ -134,6 +137,8 @@ impl Default for PollConfig {
             cursor_secs: 45,
             copilot_secs: 120,
             codex_secs: 45,
+            gemini_secs: 60,
+            perplexity_secs: 120,
             ollama_secs: 10,
             activity_secs: 3,
         }
@@ -147,6 +152,8 @@ impl PollConfig {
             ProviderId::Cursor => self.cursor_secs,
             ProviderId::Copilot => self.copilot_secs,
             ProviderId::Codex => self.codex_secs,
+            ProviderId::Gemini => self.gemini_secs,
+            ProviderId::Perplexity => self.perplexity_secs,
             ProviderId::Ollama => self.ollama_secs,
         };
         // Guard against a hand-edited config pinning a CPU core or hammering the API.

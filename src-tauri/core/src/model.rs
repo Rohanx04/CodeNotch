@@ -18,15 +18,19 @@ pub enum ProviderId {
     Cursor,
     Copilot,
     Codex,
+    Gemini,
+    Perplexity,
     Ollama,
 }
 
 impl ProviderId {
-    pub const ALL: [ProviderId; 5] = [
+    pub const ALL: [ProviderId; 7] = [
         ProviderId::ClaudeCode,
         ProviderId::Cursor,
         ProviderId::Copilot,
         ProviderId::Codex,
+        ProviderId::Gemini,
+        ProviderId::Perplexity,
         ProviderId::Ollama,
     ];
 
@@ -36,6 +40,8 @@ impl ProviderId {
             ProviderId::Cursor => "Cursor",
             ProviderId::Copilot => "GitHub Copilot",
             ProviderId::Codex => "Codex",
+            ProviderId::Gemini => "Gemini",
+            ProviderId::Perplexity => "Perplexity",
             ProviderId::Ollama => "Ollama",
         }
     }
@@ -47,6 +53,8 @@ impl ProviderId {
             ProviderId::Cursor => "cursor",
             ProviderId::Copilot => "copilot",
             ProviderId::Codex => "codex",
+            ProviderId::Gemini => "gemini",
+            ProviderId::Perplexity => "perplexity",
             ProviderId::Ollama => "ollama",
         }
     }
@@ -59,7 +67,7 @@ impl ProviderId {
     pub fn focus_processes(self) -> &'static [&'static str] {
         match self {
             // Claude Code and Codex are CLIs, so we look for the terminal hosting them.
-            ProviderId::ClaudeCode | ProviderId::Codex => &[
+            ProviderId::ClaudeCode | ProviderId::Codex | ProviderId::Gemini => &[
                 "WindowsTerminal.exe",
                 "wezterm-gui.exe",
                 "alacritty.exe",
@@ -69,6 +77,7 @@ impl ProviderId {
                 "Code.exe",
             ],
             ProviderId::Cursor => &["Cursor.exe"],
+            ProviderId::Perplexity => &["Perplexity.exe", "Comet.exe"],
             ProviderId::Copilot => &["Code.exe", "devenv.exe", "WindowsTerminal.exe"],
             ProviderId::Ollama => &["ollama app.exe", "ollama.exe"],
         }
@@ -465,7 +474,11 @@ pub fn staleness_budget(id: ProviderId) -> Duration {
     match id {
         // The OAuth usage endpoint is polled slowly and is rate limited.
         ProviderId::ClaudeCode => Duration::minutes(15),
-        ProviderId::Cursor | ProviderId::Copilot | ProviderId::Codex => Duration::minutes(10),
+        ProviderId::Cursor
+        | ProviderId::Copilot
+        | ProviderId::Codex
+        | ProviderId::Gemini
+        | ProviderId::Perplexity => Duration::minutes(10),
         // Local, cheap, and interesting only while it is live.
         ProviderId::Ollama => Duration::minutes(2),
     }

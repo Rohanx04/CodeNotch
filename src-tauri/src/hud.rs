@@ -138,11 +138,7 @@ impl Hud {
         };
 
         platform::apply_hud_chrome(handle, config.click_through_when_collapsed)?;
-        platform::apply_appearance(
-            handle,
-            Backdrop::Inherit,
-            platform::parse_hex_colour(&config.accent_hex()),
-        );
+        platform::apply_appearance(handle, Backdrop::Inherit);
         self.apply()?;
 
         if !config.hidden {
@@ -388,11 +384,7 @@ impl Hud {
         if let Some(handle) = self.handle() {
             platform::apply_hud_chrome(handle, config.click_through_when_collapsed)?;
             if accent_changed {
-                platform::apply_appearance(
-                    handle,
-                    Backdrop::Inherit,
-                    platform::parse_hex_colour(&config.accent_hex()),
-                );
+                platform::apply_appearance(handle, Backdrop::Inherit);
                 platform::refresh_frame(handle);
             }
         }

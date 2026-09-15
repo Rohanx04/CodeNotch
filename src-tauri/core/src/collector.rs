@@ -13,7 +13,7 @@ use chrono::{DateTime, Utc};
 
 use crate::adapters::{
     claude::ClaudeAdapter, codex::CodexAdapter, copilot::CopilotAdapter, cursor::CursorAdapter,
-    ollama::OllamaAdapter,
+    gemini::GeminiAdapter, ollama::OllamaAdapter, perplexity::PerplexityAdapter,
 };
 use crate::config::Config;
 use crate::model::{
@@ -59,6 +59,8 @@ pub struct Collector {
     cursor: CursorAdapter,
     copilot: CopilotAdapter,
     codex: CodexAdapter,
+    gemini: GeminiAdapter,
+    perplexity: PerplexityAdapter,
     ollama: OllamaAdapter,
     cache: BTreeMap<ProviderId, CacheEntry>,
     alerts: AlertLedger,
@@ -78,6 +80,8 @@ impl Collector {
             cursor: CursorAdapter::new(),
             copilot: CopilotAdapter::new(),
             codex: CodexAdapter::new(),
+            gemini: GeminiAdapter::new(),
+            perplexity: PerplexityAdapter::new(),
             ollama: OllamaAdapter::new(http, config.ollama_url.clone()),
             cache: BTreeMap::new(),
             alerts: AlertLedger::default(),
@@ -127,6 +131,8 @@ impl Collector {
             ProviderId::Cursor => self.cursor.collect(now),
             ProviderId::Copilot => self.copilot.collect(now),
             ProviderId::Codex => self.codex.collect(now),
+            ProviderId::Gemini => self.gemini.collect(now),
+            ProviderId::Perplexity => self.perplexity.collect(now),
             ProviderId::Ollama => self.ollama.collect(now).await,
         }
     }
@@ -264,7 +270,7 @@ mod tests {
         let ids: Vec<_> = telemetry.providers.iter().map(|p| p.id).collect();
         assert!(!ids.contains(&ProviderId::Ollama));
         assert!(!ids.contains(&ProviderId::Cursor));
-        assert_eq!(ids.len(), 3);
+        assert_eq!(ids.len(), ProviderId::ALL.len() - 2);
     }
 
     #[tokio::test]
@@ -396,12 +402,9 @@ mod tests {
         let mut config = test_config();
         config.providers.insert("ollama".into(), false);
         config.poll = PollConfig {
-            cursor_secs: 45,
-            codex_secs: 45,
-            claude_secs: 90,
-            copilot_secs: 120,
             ollama_secs: 10,
             activity_secs: 3,
+            ..PollConfig::default()
         };
         let collector = Collector::new(config);
         assert_eq!(collector.tick_interval_secs(), 45);
