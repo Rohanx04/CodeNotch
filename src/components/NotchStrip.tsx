@@ -2,10 +2,9 @@
  * The notch itself: a black strip hugging one screen edge with a ring per
  * provider.
  *
- * The strip is flush against the edge and its two free corners are rounded,
- * while small concave fillets flare out where it meets the edge — the join that
- * makes it read as carved out of the display rather than a panel floating on
- * top of it.
+ * The strip is flush against the edge and tapers away at both ends along the
+ * curve in NotchShape — the join that makes it read as carved out of the
+ * display rather than a panel floating on top of it.
  */
 
 import { useLayoutEffect, useRef, useState } from "react";
@@ -82,7 +81,6 @@ export function NotchStrip({
         className="notch-silhouette"
         width={shell.width}
         height={shell.height}
-        scoop={metrics.stripPadding}
         edge={edge}
       />
 

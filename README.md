@@ -224,4 +224,11 @@ learn *that* you are signed in and deliberately ignores the tokens beside it.
 
 ## Licence
 
-MIT
+MIT.
+
+Six of the seven provider marks on the strip come from [Simple
+Icons](https://simpleicons.org), whose icon data is released under CC0 1.0
+(`LICENSES/CC0-1.0.txt`); Codex's is drawn by hand, since OpenAI had theirs
+withdrawn from that set. Each logo remains the
+trademark of its owner and is used here only to identify which tool a ring
+belongs to.

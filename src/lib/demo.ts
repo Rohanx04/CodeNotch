@@ -15,11 +15,11 @@ const iso = (offsetMs: number) => new Date(now + offsetMs).toISOString();
 /** Mirrors HudSize::Medium in Rust. */
 export const DEMO_METRICS: HudMetrics = {
   stripThickness: 92,
-  slot: 112,
-  stripPadding: 64,
-  ring: 56,
+  slot: 135,
+  stripPadding: 48,
+  ring: 58,
   popoverSize: 320,
-  popoverGap: 12,
+  popoverGap: 50,
 };
 
 export const DEMO_CONFIG: Config = {

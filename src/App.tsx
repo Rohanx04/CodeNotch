@@ -238,8 +238,9 @@ export default function App() {
     const limit = Math.max(0, windowLength - popoverLength);
     const start = Math.min(Math.max(anchor - popoverLength / 2, 0), limit);
 
-    // Keep the tail off the card's rounded corners.
-    const inset = 20;
+    // Keep the whole tail off the card's rounded corners: its base is as tall
+    // as TAIL_HALF either side of the anchor.
+    const inset = metrics.stripThickness * 0.4;
     const offset = Math.min(
       Math.max(anchor - start, inset),
       Math.max(popoverLength - inset, inset),
@@ -275,6 +276,7 @@ export default function App() {
             config={config}
             edge={edge}
             anchor={tailOffset}
+            thickness={metrics.stripThickness}
             onFocusProvider={handleFocusProvider}
           />
         </div>

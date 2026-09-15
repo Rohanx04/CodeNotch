@@ -1,5 +1,5 @@
 /**
- * One provider on the strip: a dark disc carrying the provider's mark, a
+ * One provider on the strip: the provider's mark inside a track ring, a
  * coloured arc around it for how much of the limit is gone, and the percentage
  * underneath.
  *
@@ -47,15 +47,16 @@ export function ProviderRing({
   const pct = peakOf(provider);
   const colour = toneColour(pct, provider.health);
 
-  // Bold enough to read as a gauge across the room, not a hairline.
-  const stroke = Math.max(3.5, size * 0.09);
+  // Bold enough to read as a gauge across the room, not a hairline. An eighth
+  // of the diameter is what the reference uses.
+  const stroke = Math.max(3.5, size * 0.125);
   const radius = (size - stroke) / 2;
   const circumference = 2 * Math.PI * radius;
   const fraction = pct === null ? 0 : Math.min(Math.max(pct, 0), 100) / 100;
 
   const generating = provider.activity === "generating";
   const waiting = provider.activity === "awaitingInput";
-  const iconSize = Math.round(size * 0.42);
+  const iconSize = Math.round(size * 0.385);
 
   return (
     <button
@@ -125,7 +126,7 @@ export function ProviderRing({
         />
       </span>
 
-      <span className="ring-pct tnum" style={{ fontSize: Math.round(size * 0.38) }}>
+      <span className="ring-pct tnum" style={{ fontSize: Math.round(size * 0.355) }}>
         {pct === null ? "—" : formatPct(pct)}
       </span>
     </button>
