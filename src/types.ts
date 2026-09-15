@@ -110,10 +110,27 @@ export interface Config {
 }
 
 export interface HudState {
-  expanded: boolean;
+  /** A detail popover is open, so the window has grown inward to hold it. */
+  open: boolean;
   pinned: boolean;
   hidden: boolean;
   peeking: boolean;
+  /** Logical window size, so the webview can place the strip within it. */
+  width: number;
+  height: number;
+}
+
+/**
+ * Strip and popover dimensions, sent by the backend so both sides draw to the
+ * same numbers the window is sized with. Mirrors `HudMetrics` in Rust.
+ */
+export interface HudMetrics {
+  stripThickness: number;
+  slot: number;
+  stripPadding: number;
+  ring: number;
+  popoverSize: number;
+  popoverGap: number;
 }
 
 export interface MonitorInfo {
@@ -128,6 +145,8 @@ export interface Bootstrap {
   config: Config;
   telemetry: Telemetry;
   hud: HudState;
+  metrics: HudMetrics;
+  edge: Edge;
   version: string;
   /** False on non-Windows dev builds, where the Win32 layer is a no-op. */
   nativeWindow: boolean;

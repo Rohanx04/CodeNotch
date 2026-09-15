@@ -15,10 +15,10 @@ use crate::model::ProviderId;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Edge {
-    #[default]
     Top,
     Bottom,
     Left,
+    #[default]
     Right,
 }
 
@@ -38,37 +38,66 @@ pub enum HudSize {
     Large,
 }
 
-/// Logical (DPI-independent) pixel dimensions for both HUD states.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Logical (DPI-independent) dimensions of the notch.
+///
+/// The notch is a strip docked against one screen edge holding one ring per
+/// provider, plus a detail popover that appears alongside it on hover. "Along"
+/// is down the strip on a vertical edge, across it on a horizontal one;
+/// "thickness" is the other axis.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct HudMetrics {
-    pub collapsed_width: f64,
-    pub collapsed_height: f64,
-    pub expanded_width: f64,
-    /// Height with zero provider rows; the real height is computed by the
-    /// frontend and sent back through `hud_set_content_height`.
-    pub expanded_min_height: f64,
+    /// How far the strip reaches into the screen.
+    pub strip_thickness: f64,
+    /// Space one provider occupies along the strip: ring, percentage, gap.
+    pub slot: f64,
+    /// Padding at each end of the strip.
+    pub strip_padding: f64,
+    /// Diameter of a provider's ring.
+    pub ring: f64,
+    /// Size of the detail popover on the axis it extends along.
+    pub popover_size: f64,
+    /// Gap between the popover and the strip.
+    pub popover_gap: f64,
+}
+
+impl HudMetrics {
+    /// Resting size of the strip holding `providers` rings, as
+    /// (along the edge, into the screen).
+    pub fn strip_extent(&self, providers: usize) -> (f64, f64) {
+        // Never fewer than one slot: before the first poll there are no
+        // providers, and a zero-height strip would simply vanish.
+        let along = self.strip_padding * 2.0 + providers.max(1) as f64 * self.slot;
+        (along, self.strip_thickness)
+    }
 }
 
 impl HudSize {
     pub fn metrics(self) -> HudMetrics {
         match self {
             HudSize::Small => HudMetrics {
-                collapsed_width: 150.0,
-                collapsed_height: 26.0,
-                expanded_width: 300.0,
-                expanded_min_height: 120.0,
+                strip_thickness: 78.0,
+                slot: 82.0,
+                strip_padding: 14.0,
+                ring: 46.0,
+                popover_size: 276.0,
+                popover_gap: 10.0,
             },
             HudSize::Medium => HudMetrics {
-                collapsed_width: 190.0,
-                collapsed_height: 32.0,
-                expanded_width: 344.0,
-                expanded_min_height: 140.0,
+                strip_thickness: 92.0,
+                slot: 96.0,
+                strip_padding: 18.0,
+                ring: 56.0,
+                popover_size: 320.0,
+                popover_gap: 12.0,
             },
             HudSize::Large => HudMetrics {
-                collapsed_width: 232.0,
-                collapsed_height: 40.0,
-                expanded_width: 392.0,
-                expanded_min_height: 160.0,
+                strip_thickness: 108.0,
+                slot: 112.0,
+                strip_padding: 22.0,
+                ring: 66.0,
+                popover_size: 368.0,
+                popover_gap: 14.0,
             },
         }
     }
@@ -168,7 +197,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            edge: Edge::Top,
+            edge: Edge::Right,
             edge_offset: 0.5,
             margin: 0.0,
             size: HudSize::Medium,
@@ -382,11 +411,35 @@ mod tests {
     }
 
     #[test]
-    fn hud_metrics_expand_downward_from_a_smaller_pill() {
+    fn strip_grows_by_one_slot_per_provider() {
+        let m = HudSize::Medium.metrics();
+        let (one, thickness) = m.strip_extent(1);
+        let (three, _) = m.strip_extent(3);
+        assert_eq!(three - one, m.slot * 2.0);
+        assert_eq!(thickness, m.strip_thickness);
+    }
+
+    #[test]
+    fn an_empty_strip_still_holds_one_slot() {
+        // Before the first poll there are no providers; a zero-length strip
+        // would disappear off screen entirely.
+        let m = HudSize::Medium.metrics();
+        assert_eq!(m.strip_extent(0), m.strip_extent(1));
+    }
+
+    #[test]
+    fn every_size_keeps_the_ring_inside_its_slot() {
         for size in [HudSize::Small, HudSize::Medium, HudSize::Large] {
             let m = size.metrics();
-            assert!(m.expanded_width > m.collapsed_width);
-            assert!(m.expanded_min_height > m.collapsed_height);
+            assert!(
+                m.ring < m.strip_thickness,
+                "{size:?} ring overflows the strip"
+            );
+            assert!(m.slot > m.ring, "{size:?} slot is smaller than its ring");
+            assert!(
+                m.popover_size > m.strip_thickness,
+                "{size:?} popover too narrow"
+            );
         }
     }
 }

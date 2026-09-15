@@ -19,7 +19,7 @@ use codenotch_core::config::Edge;
 use codenotch_core::layout::{place, Placement, WorkArea};
 
 use windows::core::{BOOL, PCWSTR};
-use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, RECT, TRUE, WPARAM};
+use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, POINT, RECT, TRUE, WPARAM};
 use windows::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_SYSTEMBACKDROP_TYPE,
     DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
@@ -35,11 +35,11 @@ use windows::Win32::System::Threading::{
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
 use windows::Win32::UI::WindowsAndMessaging::{
-    BringWindowToTop, EnumWindows, GetForegroundWindow, GetWindowLongPtrW, GetWindowTextLengthW,
-    GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetForegroundWindow,
-    SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_EXSTYLE,
-    HWND_TOPMOST, LWA_ALPHA, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_RESTORE, WS_EX_APPWINDOW,
-    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
+    BringWindowToTop, EnumWindows, GetCursorPos, GetForegroundWindow, GetWindowLongPtrW,
+    GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
+    SetForegroundWindow, SetLayeredWindowAttributes, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+    GWL_EXSTYLE, HWND_TOPMOST, LWA_ALPHA, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_RESTORE,
+    WS_EX_APPWINDOW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
 };
 
 use super::{Backdrop, WindowHandle};
@@ -308,6 +308,19 @@ pub fn dock(
     let placement = place(area, edge, offset, margin, logical_width, logical_height);
     move_no_activate(handle, placement)?;
     Ok(placement)
+}
+
+/// Where the mouse is, in physical screen pixels.
+///
+/// A click-through window (`WS_EX_TRANSPARENT`) receives no mouse messages at
+/// all -- not even hover -- so the webview cannot detect the pointer arriving.
+/// Polling the cursor is what lets the notch stay click-through while resting
+/// and still open when you move onto it.
+pub fn cursor_pos() -> Option<(i32, i32)> {
+    let mut point = POINT::default();
+    // SAFETY: `point` is a plain out-parameter owned by this frame.
+    unsafe { GetCursorPos(&mut point).ok()? };
+    Some((point.x, point.y))
 }
 
 /// Basename of a process's executable, e.g. `Cursor.exe`.

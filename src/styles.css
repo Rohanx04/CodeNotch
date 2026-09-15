@@ -1,34 +1,44 @@
 @import "tailwindcss";
 
 /*
- * The Tauri window is transparent and DWM paints the acrylic behind it, so the
- * page itself must never paint an opaque background -- only the notch surface
- * does, and it stays translucent so the blur shows through.
+ * The notch is a solid black strip carved into a screen edge, so unlike the
+ * rest of the window it is opaque -- the page stays transparent and only the
+ * strip and the popover paint.
  */
 
-@theme {
-  --color-notch-surface: rgb(18 20 24 / 0.78);
-  --color-notch-surface-solid: rgb(18 20 24);
-  --color-notch-edge: rgb(255 255 255 / 0.10);
-  --color-notch-text: rgb(244 244 245);
-  --color-notch-muted: rgb(161 161 170);
-  --color-notch-faint: rgb(113 113 122);
+:root {
+  --notch-black: #060607;
+  --notch-raise: #18181b;
+  --notch-line: rgb(255 255 255 / 0.07);
 
-  --color-state-idle: rgb(52 211 153);
-  --color-state-busy: rgb(34 211 238);
-  --color-state-wait: rgb(251 191 36);
-  --color-state-done: rgb(96 165 250);
-  --color-state-bad: rgb(251 113 133);
-  --color-state-off: rgb(82 82 91);
+  --ink: #f5f5f7;
+  --ink-dim: #a1a1aa;
+  --ink-faint: #6b6b74;
 
-  --color-ring-track: rgb(255 255 255 / 0.10);
-  --color-ring-warn: rgb(251 191 36);
-  --color-ring-danger: rgb(251 113 133);
+  --ring-track: rgb(255 255 255 / 0.09);
+
+  /* Traffic light: the further through the limit, the hotter the ring. */
+  --tone-low: #30d158;
+  --tone-mid: #e4e011;
+  --tone-high: #ff4f17;
+  --tone-busy: #22d3ee;
+  --tone-bad: #ff453a;
+  --tone-stale: #6b6b74;
+  --tone-off: #3a3a3f;
+
+  /* Overwritten from the config's accent at runtime. */
+  --accent: #22d3ee;
 }
 
-:root {
-  /* Overwritten from the config's accent colour at runtime. */
-  --accent: #22d3ee;
+/*
+ * Deliberately NOT `color-scheme: dark` on the root: that makes the browser
+ * paint an opaque dark canvas behind the page, which shows up as a black
+ * rectangle around the notch instead of the desktop. Only the native controls
+ * need the dark scheme.
+ */
+select,
+input,
+textarea {
   color-scheme: dark;
 }
 
@@ -45,35 +55,511 @@ body {
   font-family:
     "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
   font-size: 12px;
-  color: var(--color-notch-text);
+  color: var(--ink);
   /* The HUD is a readout, not a document: selection and the caret are noise. */
   user-select: none;
   cursor: default;
   -webkit-font-smoothing: antialiased;
 }
 
-/* Tabular figures stop percentages from jittering as they tick. */
 .tnum {
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum";
 }
 
+/* --- The strip ---------------------------------------------------------- */
+
 /*
- * The notch surface. The 1px accent-tinted border is what reads as a Windows 11
- * "system" surface rather than a floating web panel.
+ * The strip fills the window along the edge. Its black is painted by ::before
+ * rather than by the element itself, inset by one fillet at each end, so the
+ * two concave joins have somewhere to live *inside* the window -- a window
+ * sized to the strip alone would clip them away.
  */
-.notch-surface {
-  background: var(--color-notch-surface);
-  border: 1px solid
-    color-mix(in srgb, var(--accent) 22%, var(--color-notch-edge));
-  box-shadow:
-    0 0 0 0.5px rgb(0 0 0 / 0.5),
-    0 10px 32px rgb(0 0 0 / 0.45);
-  /* Falls back gracefully when DWM's own backdrop is unavailable (Win10). */
-  backdrop-filter: blur(24px) saturate(140%);
+.notch-strip {
+  position: relative;
+  display: flex;
+  box-sizing: border-box;
+  --fillet: 16px;
 }
 
-/* Scrollbars inside the expanded card, kept unobtrusive. */
+.notch-strip::before {
+  content: "";
+  position: absolute;
+  background: var(--notch-black);
+  pointer-events: none;
+}
+
+/* Free corners are rounded; the side against the screen edge stays square. */
+.notch-strip[data-edge="right"] {
+  height: 100%;
+}
+.notch-strip[data-edge="right"]::before {
+  inset: var(--fillet) 0;
+  border-radius: 22px 0 0 22px;
+}
+.notch-strip[data-edge="left"] {
+  height: 100%;
+}
+.notch-strip[data-edge="left"]::before {
+  inset: var(--fillet) 0;
+  border-radius: 0 22px 22px 0;
+}
+.notch-strip[data-edge="top"] {
+  width: 100%;
+}
+.notch-strip[data-edge="top"]::before {
+  inset: 0 var(--fillet);
+  border-radius: 0 0 22px 22px;
+}
+.notch-strip[data-edge="bottom"] {
+  width: 100%;
+}
+.notch-strip[data-edge="bottom"]::before {
+  inset: 0 var(--fillet);
+  border-radius: 22px 22px 0 0;
+}
+
+/*
+ * The concave joins: a square of notch-black with a quarter disc masked out,
+ * flush against the screen edge at each end of the strip. The black then flares
+ * outward into the edge instead of stopping abruptly, which is what sells the
+ * "carved out of the display" look rather than "panel floating on top".
+ */
+.notch-fillet {
+  position: absolute;
+  width: var(--fillet);
+  height: var(--fillet);
+  background: var(--notch-black);
+  pointer-events: none;
+}
+
+.notch-strip[data-edge="right"] .notch-fillet,
+.notch-strip[data-edge="left"] .notch-fillet {
+  --at-x: left;
+}
+.notch-strip[data-edge="right"] .notch-fillet {
+  right: 0;
+}
+.notch-strip[data-edge="left"] .notch-fillet {
+  left: 0;
+  --at-x: right;
+}
+.notch-strip[data-edge="right"] .notch-fillet[data-end="start"],
+.notch-strip[data-edge="left"] .notch-fillet[data-end="start"] {
+  top: 0;
+  mask: radial-gradient(
+    circle var(--fillet) at var(--at-x) top,
+    transparent 0 99.5%,
+    #000 100%
+  );
+}
+.notch-strip[data-edge="right"] .notch-fillet[data-end="end"],
+.notch-strip[data-edge="left"] .notch-fillet[data-end="end"] {
+  bottom: 0;
+  mask: radial-gradient(
+    circle var(--fillet) at var(--at-x) bottom,
+    transparent 0 99.5%,
+    #000 100%
+  );
+}
+
+/* Horizontal edges flare left and right instead of up and down. */
+.notch-strip[data-edge="top"] .notch-fillet {
+  top: 0;
+  --at-y: top;
+}
+.notch-strip[data-edge="bottom"] .notch-fillet {
+  bottom: 0;
+  --at-y: bottom;
+}
+.notch-strip[data-edge="top"] .notch-fillet[data-end="start"],
+.notch-strip[data-edge="bottom"] .notch-fillet[data-end="start"] {
+  left: 0;
+  mask: radial-gradient(
+    circle var(--fillet) at left var(--at-y),
+    transparent 0 99.5%,
+    #000 100%
+  );
+}
+.notch-strip[data-edge="top"] .notch-fillet[data-end="end"],
+.notch-strip[data-edge="bottom"] .notch-fillet[data-end="end"] {
+  right: 0;
+  mask: radial-gradient(
+    circle var(--fillet) at right var(--at-y),
+    transparent 0 99.5%,
+    #000 100%
+  );
+}
+
+.notch-rings {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: space-around;
+}
+
+.ring-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* The settings gear at the tail of the strip: present but never competing with
+   the rings for attention. */
+.strip-settings {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin: 2px auto 0;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--ink-faint);
+  cursor: pointer;
+  transition: color 140ms ease, background-color 140ms ease;
+}
+.strip-settings svg {
+  width: 14px;
+  height: 14px;
+}
+.strip-settings:hover,
+.strip-settings[data-active] {
+  color: var(--ink);
+  background: rgb(255 255 255 / 0.08);
+}
+
+/* --- A provider ring ---------------------------------------------------- */
+
+.ring-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  transition: transform 160ms cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+.ring-slot:hover,
+.ring-slot[data-active] {
+  transform: scale(1.06);
+}
+.ring-slot:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+  border-radius: 12px;
+}
+
+.ring-disc {
+  position: relative;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--notch-raise);
+}
+
+.ring-arc {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+}
+
+.ring-mark {
+  position: relative;
+  color: var(--ink);
+}
+
+.ring-pct {
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.01em;
+}
+
+/* --- The detail popover ------------------------------------------------- */
+
+/*
+ * `relative`, not `absolute`: the wrapper in App.tsx does the positioning, and
+ * an absolutely-positioned card would collapse that wrapper to zero height --
+ * which is exactly what the measurement needs in order to centre the card on
+ * its ring.
+ */
+.popover {
+  position: relative;
+  width: 100%;
+  padding: 14px 16px 15px;
+  border-radius: 18px;
+  background: #0c0c0e;
+  border: 1px solid var(--notch-line);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 0.55);
+  box-sizing: border-box;
+}
+
+/*
+ * The tail points back at the ring that opened the popover. `--tail-offset` is
+ * the ring's centre in window coordinates, so with several rings stacked the
+ * tail always lands on the right one.
+ */
+.popover-tail {
+  position: absolute;
+  width: 0;
+  height: 0;
+  border: var(--tail) solid transparent;
+}
+.popover[data-edge="right"] .popover-tail {
+  left: 100%;
+  top: var(--tail-offset);
+  margin-top: calc(var(--tail) * -1);
+  border-left-color: #0c0c0e;
+  border-right-width: 0;
+}
+.popover[data-edge="left"] .popover-tail {
+  right: 100%;
+  top: var(--tail-offset);
+  margin-top: calc(var(--tail) * -1);
+  border-right-color: #0c0c0e;
+  border-left-width: 0;
+}
+.popover[data-edge="top"] .popover-tail {
+  bottom: 100%;
+  left: var(--tail-offset);
+  margin-left: calc(var(--tail) * -1);
+  border-bottom-color: #0c0c0e;
+  border-top-width: 0;
+}
+.popover[data-edge="bottom"] .popover-tail {
+  top: 100%;
+  left: var(--tail-offset);
+  margin-left: calc(var(--tail) * -1);
+  border-top-color: #0c0c0e;
+  border-bottom-width: 0;
+}
+
+/* The settings panel lays out its own padding and header rule. */
+.popover-flush {
+  padding: 0;
+  overflow: hidden;
+}
+
+.popover-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.popover-mark {
+  width: 15px;
+  height: 15px;
+  color: var(--ink);
+  flex-shrink: 0;
+}
+
+.popover-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.popover-activity {
+  margin-left: auto;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+}
+.popover-activity[data-state="awaitingInput"] {
+  color: var(--tone-mid);
+}
+.popover-activity[data-state="generating"] {
+  color: var(--tone-busy);
+}
+
+.popover-account {
+  margin: 2px 0 0;
+  font-size: 10.5px;
+  color: var(--ink-faint);
+}
+
+.popover-windows {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+
+.usage-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.usage-label {
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.usage-reset {
+  font-size: 11px;
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+
+.usage-track {
+  margin-top: 7px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.12);
+  overflow: hidden;
+}
+
+.usage-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 500ms cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+.usage-fill[data-tone="low"] {
+  background: var(--tone-low);
+}
+.usage-fill[data-tone="mid"] {
+  background: var(--tone-mid);
+}
+.usage-fill[data-tone="high"] {
+  background: var(--tone-high);
+}
+.usage-fill[data-tone="info"] {
+  background: var(--ink-dim);
+}
+
+.usage-value {
+  margin-top: 6px;
+  font-size: 11.5px;
+  color: var(--ink-dim);
+}
+
+.popover-empty,
+.popover-note {
+  margin: 10px 0 0;
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--ink-faint);
+}
+
+.popover-sessions {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--notch-line);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.session-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 4px;
+  margin: 0 -4px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: background-color 120ms ease;
+}
+.session-row:hover {
+  background: rgb(255 255 255 / 0.06);
+}
+
+.session-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--tone-off);
+}
+.session-dot[data-state="generating"] {
+  background: var(--tone-busy);
+}
+.session-dot[data-state="awaitingInput"] {
+  background: var(--tone-mid);
+  animation: notch-pulse 1.6s ease-in-out infinite;
+}
+.session-dot[data-state="done"] {
+  background: var(--tone-low);
+}
+
+.session-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  color: var(--ink-dim);
+}
+
+.session-meta {
+  flex-shrink: 0;
+  font-size: 9.5px;
+  color: var(--ink-faint);
+}
+
+/* --- Animations --------------------------------------------------------- */
+
+@keyframes notch-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.activity-spin {
+  transform-origin: 50% 50%;
+  animation: notch-spin 1.4s linear infinite;
+}
+
+@keyframes notch-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+.activity-pulse {
+  animation: notch-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes notch-reveal {
+  from {
+    opacity: 0;
+    transform: translateX(6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+.reveal {
+  animation: notch-reveal 150ms cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .activity-spin,
+  .activity-pulse,
+  .reveal,
+  .ring-slot {
+    animation: none;
+    transition: none;
+  }
+}
+
+/* Scrollbars inside a long popover, kept unobtrusive. */
 .thin-scroll {
   scrollbar-width: thin;
   scrollbar-color: rgb(255 255 255 / 0.16) transparent;
@@ -87,54 +573,4 @@ body {
 }
 .thin-scroll::-webkit-scrollbar-track {
   background: transparent;
-}
-
-/* --- Activity animations ------------------------------------------------ */
-
-/* A thin arc sweeping the ring while a model is generating. */
-@keyframes notch-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-.activity-spin {
-  transform-origin: 50% 50%;
-  animation: notch-spin 1.4s linear infinite;
-}
-
-/* A slow pulse for "blocked waiting on you" -- urgent, not frantic. */
-@keyframes notch-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.32;
-  }
-}
-.activity-pulse {
-  animation: notch-pulse 1.6s ease-in-out infinite;
-}
-
-/* The card fading in as the window grows underneath it. */
-@keyframes notch-reveal {
-  from {
-    opacity: 0;
-    transform: translateY(-4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-.reveal {
-  animation: notch-reveal 140ms cubic-bezier(0.2, 0.9, 0.3, 1) both;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .activity-spin,
-  .activity-pulse,
-  .reveal {
-    animation: none;
-  }
 }

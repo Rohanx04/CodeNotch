@@ -101,24 +101,72 @@ fn clamp_axis(start: i32, size: i32, origin: i32, extent: i32) -> i32 {
     start.clamp(origin, origin + extent - size)
 }
 
-/// Tallest the expanded card may grow, in logical pixels, before its own list
-/// starts scrolling. Keeps a runaway session list from covering the screen.
-pub const MAX_EXPANDED_HEIGHT: f64 = 620.0;
+/// Longest the strip may grow along its edge before its list scrolls instead.
+pub const MAX_STRIP_LENGTH: f64 = 720.0;
+/// Tallest the detail popover may grow.
+pub const MAX_POPOVER_LENGTH: f64 = 560.0;
 
-/// Logical size of the HUD for the current state.
+/// Logical size of the whole HUD window.
 ///
-/// `content_height` is what the webview measured for its own content; it is
-/// clamped so neither a not-yet-measured 0 nor an enormous session list can
-/// produce a silly window.
-pub fn hud_extent(metrics: HudMetrics, expanded: bool, content_height: Option<f64>) -> (f64, f64) {
-    if !expanded {
-        return (metrics.collapsed_width, metrics.collapsed_height);
+/// The window has to contain the strip and, while open, the popover beside it.
+/// `measured` is what the webview actually laid out and wins outright when
+/// present: only the webview knows whether a popover is really on screen and
+/// how tall it came out. Without that, hovering the strip between two rings
+/// would leave the window standing wide open around nothing.
+///
+/// The fallback is used until the first measurement arrives. Either way the
+/// result is clamped so a not-yet-measured 0 or a runaway list can't produce a
+/// silly window.
+pub fn hud_extent(
+    metrics: HudMetrics,
+    edge: Edge,
+    providers: usize,
+    open: bool,
+    measured: Option<(f64, f64)>,
+) -> (f64, f64) {
+    let (along, thickness) = metrics.strip_extent(providers);
+    let open_depth = thickness + metrics.popover_gap + metrics.popover_size;
+
+    let (fallback_w, fallback_h) = if edge.is_horizontal() {
+        (along, if open { open_depth } else { thickness })
+    } else {
+        (if open { open_depth } else { thickness }, along)
+    };
+
+    let usable = |value: f64| value.is_finite() && value > 0.0;
+    let (w, h) = match measured {
+        Some((w, h)) if usable(w) && usable(h) => (w, h),
+        _ => (fallback_w, fallback_h),
+    };
+
+    let max_along = MAX_STRIP_LENGTH.max(MAX_POPOVER_LENGTH);
+    if edge.is_horizontal() {
+        (
+            w.clamp(metrics.slot, max_along),
+            h.clamp(thickness, open_depth),
+        )
+    } else {
+        (
+            w.clamp(thickness, open_depth),
+            h.clamp(metrics.slot, max_along),
+        )
     }
-    let height = content_height
-        .filter(|h| h.is_finite() && *h > 0.0)
-        .unwrap_or(metrics.expanded_min_height)
-        .clamp(metrics.expanded_min_height, MAX_EXPANDED_HEIGHT);
-    (metrics.expanded_width, height)
+}
+
+/// Where the strip sits inside the window, as an offset from the window's
+/// origin, in logical pixels.
+///
+/// The strip always hugs the screen edge; the popover occupies the rest of the
+/// window on the inward side, so on a right or bottom edge the strip is pushed
+/// to the far end of the window.
+pub fn strip_offset(metrics: HudMetrics, edge: Edge, window: (f64, f64)) -> (f64, f64) {
+    let (w, h) = window;
+    match edge {
+        Edge::Right => (w - metrics.strip_thickness, 0.0),
+        Edge::Left => (0.0, 0.0),
+        Edge::Bottom => (0.0, h - metrics.strip_thickness),
+        Edge::Top => (0.0, 0.0),
+    }
 }
 
 #[cfg(test)]
@@ -253,43 +301,92 @@ mod extent_tests {
     use super::*;
     use crate::config::HudSize;
 
+    fn m() -> HudMetrics {
+        HudSize::Medium.metrics()
+    }
+
     #[test]
-    fn collapsed_uses_the_pill_metrics() {
-        let m = HudSize::Medium.metrics();
+    fn a_resting_strip_is_only_as_deep_as_its_thickness() {
+        let (w, h) = hud_extent(m(), Edge::Right, 3, false, None);
+        assert_eq!(w, m().strip_thickness);
+        assert_eq!(h, m().strip_extent(3).0);
+    }
+
+    #[test]
+    fn opening_the_popover_grows_the_window_inward_only() {
+        let resting = hud_extent(m(), Edge::Right, 3, false, None);
+        let open = hud_extent(m(), Edge::Right, 3, true, None);
         assert_eq!(
-            hud_extent(m, false, Some(500.0)),
-            (m.collapsed_width, m.collapsed_height),
-            "a measured content height is irrelevant while collapsed"
+            open.0,
+            m().strip_thickness + m().popover_gap + m().popover_size
         );
+        assert_eq!(open.1, resting.1, "length along the edge is unchanged");
     }
 
     #[test]
-    fn expanded_follows_the_measured_content() {
-        let m = HudSize::Medium.metrics();
-        let (w, h) = hud_extent(m, true, Some(300.0));
-        assert_eq!(w, m.expanded_width);
-        assert_eq!(h, 300.0);
+    fn a_horizontal_edge_swaps_the_axes() {
+        let vertical = hud_extent(m(), Edge::Right, 3, true, None);
+        let horizontal = hud_extent(m(), Edge::Top, 3, true, None);
+        assert_eq!((horizontal.1, horizontal.0), vertical);
     }
 
     #[test]
-    fn an_unmeasured_card_falls_back_to_the_minimum() {
-        let m = HudSize::Medium.metrics();
-        assert_eq!(hud_extent(m, true, None).1, m.expanded_min_height);
-        // A zero or negative measurement is a not-yet-laid-out webview.
-        assert_eq!(hud_extent(m, true, Some(0.0)).1, m.expanded_min_height);
-        assert_eq!(hud_extent(m, true, Some(-5.0)).1, m.expanded_min_height);
-        assert_eq!(hud_extent(m, true, Some(f64::NAN)).1, m.expanded_min_height);
+    fn the_measured_size_wins_when_the_webview_reports_one() {
+        let open = m().strip_thickness + m().popover_gap + m().popover_size;
+        let (w, h) = hud_extent(m(), Edge::Right, 3, true, Some((open, 430.0)));
+        assert_eq!((w, h), (open, 430.0));
     }
 
     #[test]
-    fn a_runaway_session_list_is_capped() {
-        let m = HudSize::Medium.metrics();
-        assert_eq!(hud_extent(m, true, Some(9000.0)).1, MAX_EXPANDED_HEIGHT);
+    fn hovering_the_strip_with_no_popover_keeps_the_window_narrow() {
+        // The cursor can sit on the strip between two rings: the backend thinks
+        // the notch is open, but the webview has nothing to show. Its measured
+        // depth is the strip alone, and that must win -- otherwise the window
+        // stands wide open around an empty space.
+        let (w, _) = hud_extent(
+            m(),
+            Edge::Right,
+            3,
+            true,
+            Some((m().strip_thickness, 430.0)),
+        );
+        assert_eq!(w, m().strip_thickness);
     }
 
     #[test]
-    fn tiny_content_still_clears_the_minimum() {
-        let m = HudSize::Large.metrics();
-        assert_eq!(hud_extent(m, true, Some(10.0)).1, m.expanded_min_height);
+    fn an_unmeasured_or_absurd_size_is_clamped() {
+        let natural = m().strip_extent(3).0;
+        assert_eq!(hud_extent(m(), Edge::Right, 3, true, None).1, natural);
+        // A webview that has not laid out yet reports zero.
+        assert_eq!(
+            hud_extent(m(), Edge::Right, 3, true, Some((0.0, 0.0))).1,
+            natural
+        );
+        assert_eq!(
+            hud_extent(m(), Edge::Right, 3, true, Some((10.0, f64::NAN))).1,
+            natural
+        );
+        // A runaway list cannot cover the screen, and neither can a bogus depth.
+        let (w, h) = hud_extent(m(), Edge::Right, 3, true, Some((9000.0, 9000.0)));
+        assert!(h <= MAX_STRIP_LENGTH.max(MAX_POPOVER_LENGTH));
+        assert!(w <= m().strip_thickness + m().popover_gap + m().popover_size);
+    }
+
+    #[test]
+    fn the_strip_hugs_its_edge_within_the_window() {
+        let window = hud_extent(m(), Edge::Right, 3, true, None);
+        // Docked right: the strip is pushed to the window's right end, leaving
+        // the popover the inward side.
+        let (x, y) = strip_offset(m(), Edge::Right, window);
+        assert_eq!(x, window.0 - m().strip_thickness);
+        assert_eq!(y, 0.0);
+
+        // Docked left: the strip is already at the origin.
+        assert_eq!(strip_offset(m(), Edge::Left, window), (0.0, 0.0));
+
+        let window = hud_extent(m(), Edge::Bottom, 3, true, None);
+        let (x, y) = strip_offset(m(), Edge::Bottom, window);
+        assert_eq!(x, 0.0);
+        assert_eq!(y, window.1 - m().strip_thickness);
     }
 }

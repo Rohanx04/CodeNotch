@@ -7,13 +7,23 @@
  * signed-out provider and one that isn't installed.
  */
 
-import type { Bootstrap, Config, Telemetry } from "../types";
+import type { Bootstrap, Config, HudMetrics, Telemetry } from "../types";
 
 const now = Date.now();
 const iso = (offsetMs: number) => new Date(now + offsetMs).toISOString();
 
+/** Mirrors HudSize::Medium in Rust. */
+export const DEMO_METRICS: HudMetrics = {
+  stripThickness: 92,
+  slot: 96,
+  stripPadding: 18,
+  ring: 56,
+  popoverSize: 320,
+  popoverGap: 12,
+};
+
 export const DEMO_CONFIG: Config = {
-  edge: "top",
+  edge: "right",
   edgeOffset: 0.5,
   margin: 0,
   size: "medium",
@@ -248,7 +258,16 @@ export const DEMO_TELEMETRY: Telemetry = {
 export const DEMO_BOOTSTRAP: Bootstrap = {
   config: DEMO_CONFIG,
   telemetry: DEMO_TELEMETRY,
-  hud: { expanded: false, pinned: false, hidden: false, peeking: false },
+  hud: {
+    open: false,
+    pinned: false,
+    hidden: false,
+    peeking: false,
+    width: DEMO_METRICS.stripThickness,
+    height: DEMO_METRICS.stripPadding * 2 + 5 * DEMO_METRICS.slot,
+  },
+  metrics: DEMO_METRICS,
+  edge: "right",
   version: "0.1.0-demo",
   nativeWindow: false,
 };

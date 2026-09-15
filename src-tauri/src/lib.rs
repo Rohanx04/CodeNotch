@@ -48,7 +48,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::hud_ready,
             commands::hud_hover,
-            commands::hud_set_content_height,
+            commands::hud_set_content_size,
             commands::hud_toggle_pin,
             commands::get_config,
             commands::set_config,

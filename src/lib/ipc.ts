@@ -44,8 +44,8 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
 export const ipc = {
   ready: () => call<Bootstrap>("hud_ready"),
   hover: (hovering: boolean) => call<void>("hud_hover", { hovering }),
-  setContentHeight: (height: number) =>
-    call<void>("hud_set_content_height", { height }),
+  setContentSize: (width: number, height: number) =>
+    call<void>("hud_set_content_size", { width, height }),
   togglePin: () => call<boolean>("hud_toggle_pin"),
   getConfig: () => call<Config>("get_config"),
   setConfig: (config: Config) => call<Config>("set_config", { config }),
