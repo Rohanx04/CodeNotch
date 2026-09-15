@@ -7,20 +7,24 @@
  */
 
 :root {
-  --notch-black: #060607;
-  --notch-raise: #18181b;
+  /* Pure black: the strip has to read as display that isn't there, and any
+     lift at all makes it a dark panel sitting on the desktop instead. */
+  --notch-black: #000000;
   --notch-line: rgb(255 255 255 / 0.07);
+  /* The card is the same black as the strip: one carved surface, not a panel
+     floating beside it. */
+  --popover-bg: #000000;
 
   --ink: #f5f5f7;
   --ink-dim: #a1a1aa;
   --ink-faint: #6b6b74;
 
-  --ring-track: rgb(255 255 255 / 0.09);
+  --ring-track: #303030;
 
   /* Traffic light: the further through the limit, the hotter the ring. */
-  --tone-low: #30d158;
-  --tone-mid: #e4e011;
-  --tone-high: #ff4f17;
+  --tone-low: #00ff89;
+  --tone-mid: #f3ff00;
+  --tone-high: #ff3e00;
   --tone-busy: #22d3ee;
   --tone-bad: #ff453a;
   --tone-stale: #6b6b74;
@@ -70,125 +74,19 @@ body {
 /* --- The strip ---------------------------------------------------------- */
 
 /*
- * The strip fills the window along the edge. Its black is painted by ::before
- * rather than by the element itself, inset by one fillet at each end, so the
- * two concave joins have somewhere to live *inside* the window -- a window
- * sized to the strip alone would clip them away.
+ * The black is painted by NotchShape's SVG path, not by this element: the
+ * corners are concave, which `border-radius` cannot express.
  */
 .notch-strip {
   position: relative;
   display: flex;
   box-sizing: border-box;
-  --fillet: 16px;
 }
 
-.notch-strip::before {
-  content: "";
+.notch-silhouette {
   position: absolute;
-  background: var(--notch-black);
+  inset: 0;
   pointer-events: none;
-}
-
-/* Free corners are rounded; the side against the screen edge stays square. */
-.notch-strip[data-edge="right"] {
-  height: 100%;
-}
-.notch-strip[data-edge="right"]::before {
-  inset: var(--fillet) 0;
-  border-radius: 22px 0 0 22px;
-}
-.notch-strip[data-edge="left"] {
-  height: 100%;
-}
-.notch-strip[data-edge="left"]::before {
-  inset: var(--fillet) 0;
-  border-radius: 0 22px 22px 0;
-}
-.notch-strip[data-edge="top"] {
-  width: 100%;
-}
-.notch-strip[data-edge="top"]::before {
-  inset: 0 var(--fillet);
-  border-radius: 0 0 22px 22px;
-}
-.notch-strip[data-edge="bottom"] {
-  width: 100%;
-}
-.notch-strip[data-edge="bottom"]::before {
-  inset: 0 var(--fillet);
-  border-radius: 22px 22px 0 0;
-}
-
-/*
- * The concave joins: a square of notch-black with a quarter disc masked out,
- * flush against the screen edge at each end of the strip. The black then flares
- * outward into the edge instead of stopping abruptly, which is what sells the
- * "carved out of the display" look rather than "panel floating on top".
- */
-.notch-fillet {
-  position: absolute;
-  width: var(--fillet);
-  height: var(--fillet);
-  background: var(--notch-black);
-  pointer-events: none;
-}
-
-.notch-strip[data-edge="right"] .notch-fillet,
-.notch-strip[data-edge="left"] .notch-fillet {
-  --at-x: left;
-}
-.notch-strip[data-edge="right"] .notch-fillet {
-  right: 0;
-}
-.notch-strip[data-edge="left"] .notch-fillet {
-  left: 0;
-  --at-x: right;
-}
-.notch-strip[data-edge="right"] .notch-fillet[data-end="start"],
-.notch-strip[data-edge="left"] .notch-fillet[data-end="start"] {
-  top: 0;
-  mask: radial-gradient(
-    circle var(--fillet) at var(--at-x) top,
-    transparent 0 99.5%,
-    #000 100%
-  );
-}
-.notch-strip[data-edge="right"] .notch-fillet[data-end="end"],
-.notch-strip[data-edge="left"] .notch-fillet[data-end="end"] {
-  bottom: 0;
-  mask: radial-gradient(
-    circle var(--fillet) at var(--at-x) bottom,
-    transparent 0 99.5%,
-    #000 100%
-  );
-}
-
-/* Horizontal edges flare left and right instead of up and down. */
-.notch-strip[data-edge="top"] .notch-fillet {
-  top: 0;
-  --at-y: top;
-}
-.notch-strip[data-edge="bottom"] .notch-fillet {
-  bottom: 0;
-  --at-y: bottom;
-}
-.notch-strip[data-edge="top"] .notch-fillet[data-end="start"],
-.notch-strip[data-edge="bottom"] .notch-fillet[data-end="start"] {
-  left: 0;
-  mask: radial-gradient(
-    circle var(--fillet) at left var(--at-y),
-    transparent 0 99.5%,
-    #000 100%
-  );
-}
-.notch-strip[data-edge="top"] .notch-fillet[data-end="end"],
-.notch-strip[data-edge="bottom"] .notch-fillet[data-end="end"] {
-  right: 0;
-  mask: radial-gradient(
-    circle var(--fillet) at right var(--at-y),
-    transparent 0 99.5%,
-    #000 100%
-  );
 }
 
 .notch-rings {
@@ -237,7 +135,7 @@ body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
   padding: 0;
   border: 0;
   background: none;
@@ -255,12 +153,12 @@ body {
   border-radius: 12px;
 }
 
+/* No fill: in the reference the ring is a track and a mark, and the strip's
+   black shows through the middle. */
 .ring-disc {
   position: relative;
   display: grid;
   place-items: center;
-  border-radius: 50%;
-  background: var(--notch-raise);
 }
 
 .ring-arc {
@@ -293,8 +191,7 @@ body {
   width: 100%;
   padding: 14px 16px 15px;
   border-radius: 18px;
-  background: #0c0c0e;
-  border: 1px solid var(--notch-line);
+  background: var(--popover-bg);
   box-shadow: 0 18px 48px rgb(0 0 0 / 0.55);
   box-sizing: border-box;
 }
@@ -306,37 +203,27 @@ body {
  */
 .popover-tail {
   position: absolute;
-  width: 0;
-  height: 0;
-  border: var(--tail) solid transparent;
+  overflow: visible;
 }
 .popover[data-edge="right"] .popover-tail {
   left: 100%;
   top: var(--tail-offset);
-  margin-top: calc(var(--tail) * -1);
-  border-left-color: #0c0c0e;
-  border-right-width: 0;
+  margin-top: calc(var(--tail-half) * -1);
 }
 .popover[data-edge="left"] .popover-tail {
   right: 100%;
   top: var(--tail-offset);
-  margin-top: calc(var(--tail) * -1);
-  border-right-color: #0c0c0e;
-  border-left-width: 0;
+  margin-top: calc(var(--tail-half) * -1);
 }
 .popover[data-edge="top"] .popover-tail {
   bottom: 100%;
   left: var(--tail-offset);
-  margin-left: calc(var(--tail) * -1);
-  border-bottom-color: #0c0c0e;
-  border-top-width: 0;
+  margin-left: calc(var(--tail-half) * -1);
 }
 .popover[data-edge="bottom"] .popover-tail {
   top: 100%;
   left: var(--tail-offset);
-  margin-left: calc(var(--tail) * -1);
-  border-top-color: #0c0c0e;
-  border-bottom-width: 0;
+  margin-left: calc(var(--tail-half) * -1);
 }
 
 /* The settings panel lays out its own padding and header rule. */

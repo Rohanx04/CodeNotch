@@ -2,15 +2,16 @@
  * The notch itself: a black strip hugging one screen edge with a ring per
  * provider.
  *
- * The strip is flush against the edge and its two free corners are rounded,
- * while small concave fillets flare out where it meets the edge — the join that
- * makes it read as carved out of the display rather than a panel floating on
- * top of it.
+ * The strip is flush against the edge and tapers away at both ends along the
+ * curve in NotchShape — the join that makes it read as carved out of the
+ * display rather than a panel floating on top of it.
  */
 
+import { useLayoutEffect, useRef, useState } from "react";
 import { Settings2 } from "lucide-react";
 
 import type { Edge, HudMetrics, ProviderSnapshot } from "../types";
+import { NotchShape } from "./NotchShape";
 import { ProviderRing } from "./ProviderRing";
 
 interface Props {
@@ -40,10 +41,33 @@ export function NotchStrip({
   innerRef,
 }: Props) {
   const vertical = edge === "left" || edge === "right";
+  const shellRef = useRef<HTMLDivElement | null>(null);
+  const [shell, setShell] = useState({ width: 0, height: 0 });
+
+  // The silhouette is drawn at exact pixel size, so it has to follow the strip
+  // as rings come and go.
+  useLayoutEffect(() => {
+    const node = shellRef.current;
+    if (!node) return;
+    const measure = () => {
+      const box = node.getBoundingClientRect();
+      setShell({ width: Math.ceil(box.width), height: Math.ceil(box.height) });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [vertical, metrics, providers.length]);
 
   return (
     <div
-      ref={innerRef}
+      ref={(node) => {
+        shellRef.current = node;
+        if (typeof innerRef === "function") innerRef(node);
+        else if (innerRef) {
+          (innerRef as React.RefObject<HTMLDivElement | null>).current = node;
+        }
+      }}
       className="notch-strip"
       data-edge={edge}
       style={{
@@ -53,9 +77,12 @@ export function NotchStrip({
           : `0 ${metrics.stripPadding}px`,
       }}
     >
-      {/* The concave joins to the screen edge, above and below the strip. */}
-      <span className="notch-fillet" data-end="start" aria-hidden />
-      <span className="notch-fillet" data-end="end" aria-hidden />
+      <NotchShape
+        className="notch-silhouette"
+        width={shell.width}
+        height={shell.height}
+        edge={edge}
+      />
 
       <div
         className="notch-rings"

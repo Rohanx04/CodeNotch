@@ -102,7 +102,7 @@ fn clamp_axis(start: i32, size: i32, origin: i32, extent: i32) -> i32 {
 }
 
 /// Longest the strip may grow along its edge before its list scrolls instead.
-pub const MAX_STRIP_LENGTH: f64 = 720.0;
+pub const MAX_STRIP_LENGTH: f64 = 1000.0;
 /// Tallest the detail popover may grow.
 pub const MAX_POPOVER_LENGTH: f64 = 560.0;
 

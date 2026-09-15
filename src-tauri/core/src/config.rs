@@ -50,14 +50,25 @@ pub struct HudMetrics {
     /// How far the strip reaches into the screen.
     pub strip_thickness: f64,
     /// Space one provider occupies along the strip: ring, percentage, gap.
+    ///
+    /// Measured off the reference art at 1.47x the strip's thickness.
     pub slot: f64,
-    /// Padding at each end of the strip.
+    /// Padding at each end of the strip, before the first slot.
+    ///
+    /// Measured at 0.53x the thickness. This is *not* the taper length: the
+    /// silhouette's curve runs 1.21x the thickness and so reaches into the
+    /// first slot, exactly as the reference does — a ring is inset far enough
+    /// from the strip's sides that the last percent of the taper never clips
+    /// it.
     pub strip_padding: f64,
     /// Diameter of a provider's ring.
     pub ring: f64,
     /// Size of the detail popover on the axis it extends along.
     pub popover_size: f64,
     /// Gap between the popover and the strip.
+    ///
+    /// 0.54x the thickness, because the card's tail reaches 0.4x across it and
+    /// the reference leaves the rest as clear air.
     pub popover_gap: f64,
 }
 
@@ -77,27 +88,27 @@ impl HudSize {
         match self {
             HudSize::Small => HudMetrics {
                 strip_thickness: 78.0,
-                slot: 82.0,
-                strip_padding: 14.0,
-                ring: 46.0,
+                slot: 115.0,
+                strip_padding: 41.0,
+                ring: 49.0,
                 popover_size: 276.0,
-                popover_gap: 10.0,
+                popover_gap: 42.0,
             },
             HudSize::Medium => HudMetrics {
                 strip_thickness: 92.0,
-                slot: 96.0,
-                strip_padding: 18.0,
-                ring: 56.0,
+                slot: 135.0,
+                strip_padding: 48.0,
+                ring: 58.0,
                 popover_size: 320.0,
-                popover_gap: 12.0,
+                popover_gap: 50.0,
             },
             HudSize::Large => HudMetrics {
                 strip_thickness: 108.0,
-                slot: 112.0,
-                strip_padding: 22.0,
-                ring: 66.0,
+                slot: 159.0,
+                strip_padding: 57.0,
+                ring: 68.0,
                 popover_size: 368.0,
-                popover_gap: 14.0,
+                popover_gap: 58.0,
             },
         }
     }
@@ -122,6 +133,8 @@ pub struct PollConfig {
     pub cursor_secs: u64,
     pub copilot_secs: u64,
     pub codex_secs: u64,
+    pub gemini_secs: u64,
+    pub perplexity_secs: u64,
     pub ollama_secs: u64,
     /// Cheap local file-watch pass that drives the activity ring between polls.
     pub activity_secs: u64,
@@ -134,6 +147,8 @@ impl Default for PollConfig {
             cursor_secs: 45,
             copilot_secs: 120,
             codex_secs: 45,
+            gemini_secs: 60,
+            perplexity_secs: 120,
             ollama_secs: 10,
             activity_secs: 3,
         }
@@ -147,6 +162,8 @@ impl PollConfig {
             ProviderId::Cursor => self.cursor_secs,
             ProviderId::Copilot => self.copilot_secs,
             ProviderId::Codex => self.codex_secs,
+            ProviderId::Gemini => self.gemini_secs,
+            ProviderId::Perplexity => self.perplexity_secs,
             ProviderId::Ollama => self.ollama_secs,
         };
         // Guard against a hand-edited config pinning a CPU core or hammering the API.
@@ -425,6 +442,26 @@ mod tests {
         // would disappear off screen entirely.
         let m = HudSize::Medium.metrics();
         assert_eq!(m.strip_extent(0), m.strip_extent(1));
+    }
+
+    #[test]
+    fn every_size_keeps_the_reference_proportions() {
+        // The silhouette is derived from the thickness, so everything laid out
+        // against it has to scale with the thickness too -- otherwise the
+        // small and large strips stop looking like the same object.
+        for size in [HudSize::Small, HudSize::Medium, HudSize::Large] {
+            let m = size.metrics();
+            for (name, ratio, want) in [
+                ("slot", m.slot / m.strip_thickness, 1.47),
+                ("padding", m.strip_padding / m.strip_thickness, 0.53),
+                ("ring", m.ring / m.strip_thickness, 0.63),
+            ] {
+                assert!(
+                    (ratio - want).abs() < 0.02,
+                    "{size:?} {name} is {ratio:.2}x thickness, expected ~{want:.2}x"
+                );
+            }
+        }
     }
 
     #[test]

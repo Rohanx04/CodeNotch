@@ -46,6 +46,8 @@ use super::{Backdrop, WindowHandle};
 
 /// Win11 build 22621 names these; older SDK headers don't have the constants.
 const DWMSBT_NONE: i32 = 1;
+/// `DWMWA_COLOR_NONE`: suppress the frame border entirely.
+const DWM_COLOR_NONE: u32 = 0xFFFF_FFFE;
 const DWMSBT_MAINWINDOW: i32 = 2; // Mica
 const DWMSBT_TRANSIENTWINDOW: i32 = 3; // Acrylic
 
@@ -143,11 +145,11 @@ pub fn move_no_activate(handle: WindowHandle, placement: Placement) -> Result<()
     Ok(())
 }
 
-/// Ask DWM for rounded corners, a dark frame, an accent border and a backdrop.
+/// Ask DWM for rounded corners, a dark frame and a backdrop.
 ///
 /// Every call is best-effort: these attributes are Windows 11 era, and on
 /// Windows 10 they simply return an error we ignore rather than failing setup.
-pub fn apply_appearance(handle: WindowHandle, backdrop: Backdrop, accent: Option<u32>) {
+pub fn apply_appearance(handle: WindowHandle, backdrop: Backdrop) {
     let hwnd = hwnd(handle);
 
     // SAFETY: each call passes a correctly sized value for its attribute.
@@ -168,16 +170,21 @@ pub fn apply_appearance(handle: WindowHandle, backdrop: Backdrop, accent: Option
             std::mem::size_of::<i32>() as u32,
         );
 
-        if let Some(rgb) = accent {
-            // DWM wants COLORREF (0x00BBGGRR), not the 0xRRGGBB we store.
-            let colour = COLORREF(swap_rgb(rgb));
-            let _ = DwmSetWindowAttribute(
-                hwnd,
-                DWMWA_BORDER_COLOR,
-                &colour as *const _ as *const _,
-                std::mem::size_of::<COLORREF>() as u32,
-            );
-        }
+        // Suppress the frame border rather than tinting it.
+        //
+        // DWM draws this border around the *whole window rectangle*. The notch
+        // window is mostly transparent -- it is sized to hold the popover
+        // alongside the strip -- so a coloured border outlines that empty
+        // rectangle on the desktop, which reads as a stray box floating next to
+        // the notch rather than as trim on the notch itself. The accent belongs
+        // on the rings, where the webview paints it.
+        let border = COLORREF(DWM_COLOR_NONE);
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_BORDER_COLOR,
+            &border as *const _ as *const _,
+            std::mem::size_of::<COLORREF>() as u32,
+        );
 
         // `Inherit` deliberately leaves the backdrop alone; see `Backdrop`.
         if let Some(kind) = match backdrop {

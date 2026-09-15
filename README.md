@@ -34,7 +34,13 @@ generating, and it pulses amber when one is blocked on a `[y/N]` prompt.
 | **Cursor** | `%APPDATA%\Cursor\User\globalStorage\state.vscdb` and per-workspace databases, read without locking them | Plan, account, any cached request counters, live composer sessions per project |
 | **Codex** | Rollout transcripts under `%USERPROFILE%\.codex\sessions\` (plus `~/.codex-<profile>`) | The rate-limit snapshot Codex records from the API, token totals, pending tool approvals |
 | **GitHub Copilot** | Cached quota payloads under `%LOCALAPPDATA%\github-copilot\`, `~/.config/github-copilot\`, `~/.copilot\` | Plan, signed-in user, chat/completions/premium quota and reset date |
+| **Gemini** | `%USERPROFILE%\.gemini\` — settings, OAuth creds, the signed-in account, and per-project logs under `tmp/` | Account, sign-in state, which projects are active and when |
+| **Perplexity** | `%APPDATA%\Perplexity\` and `%APPDATA%\Comet\` | Plan and account where the app caches them |
 | **Ollama** | `http://127.0.0.1:11434/api/ps` | Resident models, VRAM vs system-RAM split, quantisation, context length |
+
+Gemini and Perplexity keep usage server-side and cache no quota locally, so
+their cards say that rather than showing a ring. Both adapters will pick a
+quota up automatically if a future build starts caching one.
 
 Two rules hold across every adapter:
 
@@ -126,7 +132,7 @@ dependency, so its tests run on any host:
 
 ```bash
 cd src-tauri/core
-cargo test          # 153 tests: adapters, SQLite reader, layout, config, collector
+cargo test          # 171 tests: adapters, SQLite reader, layout, config, collector
 cargo clippy --all-targets
 ```
 
@@ -182,6 +188,7 @@ corrupt file falls back to defaults rather than refusing to start).
 | `resetAsCountdown` | `true` | `1h 36m` rather than a clock time |
 | `launchAtLogin` | `false` | Adds an `HKCU\...\CurrentVersion\Run` entry |
 | `poll.*` | 45–120s | Per-provider intervals, clamped to 5–3600s |
+| `providers.gemini` etc. | `true` | One switch per provider |
 | `providers` | all `true` | Turn individual providers off |
 | `ollamaUrl` | `http://127.0.0.1:11434` | Point at a remote or WSL daemon |
 
@@ -217,4 +224,11 @@ learn *that* you are signed in and deliberately ignores the tokens beside it.
 
 ## Licence
 
-MIT
+MIT.
+
+Six of the seven provider marks on the strip come from [Simple
+Icons](https://simpleicons.org), whose icon data is released under CC0 1.0
+(`LICENSES/CC0-1.0.txt`); Codex's is drawn by hand, since OpenAI had theirs
+withdrawn from that set. Each logo remains the
+trademark of its owner and is used here only to identify which tool a ring
+belongs to.

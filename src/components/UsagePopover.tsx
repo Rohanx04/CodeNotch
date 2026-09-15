@@ -23,20 +23,69 @@ interface Props {
   edge: Edge;
   /** Centre of the ring this belongs to, in window coordinates. */
   anchor: number;
+  /** Strip thickness: the tail is drawn in proportion to it. */
+  thickness: number;
   onFocusProvider: (provider: ProviderSnapshot, titleHint?: string | null) => void;
 }
 
-/** Tail size in px; the CSS triangle is drawn to match. */
-const TAIL = 9;
+/**
+ * The tail, as multiples of the strip's thickness.
+ *
+ * Measured off the reference along with the silhouette: a long spike with
+ * concave flanks, not a triangle. Each flank is one quadratic whose control
+ * point sits on the card's own edge, 46% of the way from the tip back to the
+ * base corner — which is what gives it the drawn-out, liquid look.
+ */
+const TAIL_LENGTH = 0.4;
+const TAIL_HALF = 0.33;
+const TAIL_CONTROL = 0.46;
+
+/** The tail as an SVG, pointing away from the card towards the strip. */
+function Tail({ edge, thickness }: { edge: Edge; thickness: number }) {
+  const length = Math.round(thickness * TAIL_LENGTH);
+  const half = Math.round(thickness * TAIL_HALF);
+  const c = half * (1 - TAIL_CONTROL);
+
+  // Drawn pointing right, then rotated onto the edge that needs it.
+  const vertical = edge === "left" || edge === "right";
+  const w = vertical ? length : half * 2;
+  const h = vertical ? half * 2 : length;
+  const flip = edge === "left" || edge === "top";
+  const at = (along: number, across: number) => {
+    const a = flip ? length - along : along;
+    return vertical ? `${a} ${across}` : `${across} ${a}`;
+  };
+
+  return (
+    <svg
+      className="popover-tail"
+      width={w}
+      height={h}
+      viewBox={`0 0 ${w} ${h}`}
+      style={{ "--tail-half": `${half}px` } as React.CSSProperties}
+      aria-hidden
+    >
+      <path
+        d={[
+          `M ${at(0, 0)}`,
+          `Q ${at(0, c)} ${at(length, half)}`,
+          `Q ${at(0, half * 2 - c)} ${at(0, half * 2)}`,
+          "Z",
+        ].join(" ")}
+        fill="var(--popover-bg)"
+      />
+    </svg>
+  );
+}
 
 export function UsagePopover({
   provider,
   config,
   edge,
   anchor,
+  thickness,
   onFocusProvider,
 }: Props) {
-  const vertical = edge === "left" || edge === "right";
   const health = healthLabel(provider.health);
   const activity = activityLabel(provider.activity);
 
@@ -45,15 +94,11 @@ export function UsagePopover({
       className="popover"
       data-edge={edge}
       // The tail tracks the ring; everything else stays put.
-      style={
-        vertical
-          ? ({ "--tail-offset": `${anchor}px` } as React.CSSProperties)
-          : ({ "--tail-offset": `${anchor}px` } as React.CSSProperties)
-      }
+      style={{ "--tail-offset": `${anchor}px` } as React.CSSProperties}
       role="dialog"
       aria-label={`${provider.name} usage`}
     >
-      <span className="popover-tail" style={{ "--tail": `${TAIL}px` } as React.CSSProperties} />
+      <Tail edge={edge} thickness={thickness} />
 
       <header className="popover-head">
         <BrandIcon provider={provider.id} className="popover-mark" />

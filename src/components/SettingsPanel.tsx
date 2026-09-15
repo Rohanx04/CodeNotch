@@ -24,6 +24,8 @@ const PROVIDERS: { id: ProviderId; label: string }[] = [
   { id: "cursor", label: "Cursor" },
   { id: "copilot", label: "GitHub Copilot" },
   { id: "codex", label: "Codex" },
+  { id: "gemini", label: "Gemini" },
+  { id: "perplexity", label: "Perplexity" },
   { id: "ollama", label: "Ollama" },
 ];
 

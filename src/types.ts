@@ -5,7 +5,14 @@
  * in sync: the Rust structs are the source of truth.
  */
 
-export type ProviderId = "claudeCode" | "cursor" | "copilot" | "codex" | "ollama";
+export type ProviderId =
+  | "claudeCode"
+  | "cursor"
+  | "copilot"
+  | "codex"
+  | "gemini"
+  | "perplexity"
+  | "ollama";
 
 /** Whether a provider's numbers can be trusted right now. */
 export type Health =
@@ -82,6 +89,8 @@ export interface PollConfig {
   cursorSecs: number;
   copilotSecs: number;
   codexSecs: number;
+  geminiSecs: number;
+  perplexitySecs: number;
   ollamaSecs: number;
   activitySecs: number;
 }
@@ -158,4 +167,6 @@ export const FOCUSABLE: ReadonlySet<ProviderId> = new Set<ProviderId>([
   "cursor",
   "copilot",
   "codex",
+  "gemini",
+  "perplexity",
 ]);
