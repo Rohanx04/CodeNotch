@@ -71,6 +71,21 @@ jobs:
       # tauri-build needs the frontend output directory to exist.
       - run: mkdir -p dist && touch dist/index.html
 
+      # tauri-build compiles a Windows resource file (icon, version info) even
+      # for `cargo check`, and off-Windows it shells out to `llvm-rc`. Without
+      # it the build script panics with NotAttempted("llvm-rc").
+      - name: Install the Windows resource compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y llvm
+          # The `llvm` package normally provides an unversioned symlink; fall
+          # back to the highest versioned binary if this release doesn't.
+          if ! command -v llvm-rc >/dev/null; then
+            sudo ln -s "$(ls /usr/bin/llvm-rc-* | sort -V | tail -1)" /usr/local/bin/llvm-rc
+          fi
+          llvm-rc /? >/dev/null 2>&1 || true
+          command -v llvm-rc
+
       - name: Check
         working-directory: src-tauri
         run: cargo check --target x86_64-pc-windows-msvc --all-targets

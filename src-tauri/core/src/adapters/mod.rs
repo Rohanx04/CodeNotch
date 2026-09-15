@@ -181,7 +181,7 @@ pub fn newest_files(dir: &Path, extension: &str, limit: usize) -> Vec<PathBuf> {
         })
         .collect();
 
-    found.sort_by(|a, b| b.0.cmp(&a.0));
+    found.sort_by_key(|a| std::cmp::Reverse(a.0));
     found.into_iter().take(limit).map(|(_, p)| p).collect()
 }
 

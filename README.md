@@ -144,7 +144,11 @@ cargo clippy --target x86_64-pc-windows-msvc --all-targets
 ```
 
 This works because the crate pulls in no C-compiled dependencies: TLS goes
-through schannel via `native-tls`, and SQLite is parsed in pure Rust.
+through schannel via `native-tls`, and SQLite is parsed in pure Rust. The one
+external tool it does need is `llvm-rc`, which `tauri-build` shells out to when
+compiling the Windows resource file off-Windows (`sudo apt install llvm` on
+Debian/Ubuntu); without it the build script panics with
+`NotAttempted("llvm-rc")`.
 
 Frontend:
 

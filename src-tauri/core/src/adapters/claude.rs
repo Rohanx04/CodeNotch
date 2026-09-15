@@ -99,10 +99,8 @@ fn plan_label(subscription: Option<&str>) -> Option<String> {
         "free" => "Free".to_string(),
         other => {
             let mut c = other.chars();
-            match c.next() {
-                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-                None => return None,
-            }
+            let first = c.next()?;
+            first.to_uppercase().collect::<String>() + c.as_str()
         }
     })
 }
