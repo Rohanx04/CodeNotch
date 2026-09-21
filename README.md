@@ -30,7 +30,7 @@ generating, and it pulses amber when one is blocked on a `[y/N]` prompt.
 
 | Provider | Source | What you get |
 | --- | --- | --- |
-| **Claude Code** | `GET /api/oauth/usage` with the token from `%USERPROFILE%\.claude\.credentials.json` or Windows Credential Manager; falls back to session transcripts under `%USERPROFILE%\.claude\projects\` | Real 5-hour and 7-day utilisation, reset times, plan, per-project sessions, and whether a session is parked on a permission prompt |
+| **Claude Code** | `GET /api/oauth/usage` with the token from `%USERPROFILE%\.claude\.credentials.json` or Windows Credential Manager, whichever holds the fresher token; falls back to session transcripts under `%USERPROFILE%\.claude\projects\` | Real 5-hour and 7-day utilisation, reset times, plan, per-project sessions, and whether a session is parked on a permission prompt |
 | **Cursor** | `%APPDATA%\Cursor\User\globalStorage\state.vscdb` and per-workspace databases, read without locking them | Plan, account, any cached request counters, live composer sessions per project |
 | **Codex** | Rollout transcripts under `%USERPROFILE%\.codex\sessions\` (plus `~/.codex-<profile>`) | The rate-limit snapshot Codex records from the API, token totals, pending tool approvals |
 | **GitHub Copilot** | Cached quota payloads under `%LOCALAPPDATA%\github-copilot\`, `~/.config/github-copilot\`, `~/.copilot\` | Plan, signed-in user, chat/completions/premium quota and reset date |
@@ -52,6 +52,12 @@ Two rules hold across every adapter:
   `stale`, `sign in`, `rate limited`, `error` — instead of a plausible-looking
   zero. Anything derived locally rather than reported by the provider is marked
   with a `~`.
+- **A cached expiry is a hint, not a verdict.** These tools hold short-lived
+  access tokens and renew them from a refresh token whenever they run, so a
+  signed-in account spends most of its time with a lapsed timestamp on disk.
+  Adapters therefore never conclude "signed out" from a stale `expiresAt`:
+  Claude asks the endpoint and lets a 401 say so, and Gemini treats a refresh
+  token as proof the CLI can renew itself.
 
 ## Window behaviour
 
@@ -144,7 +150,7 @@ dependency, so its tests run on any host:
 
 ```bash
 cd src-tauri/core
-cargo test          # 181 tests: adapters, SQLite reader, layout, config, collector
+cargo test          # 185 tests: adapters, SQLite reader, layout, config, collector
 cargo clippy --all-targets
 ```
 

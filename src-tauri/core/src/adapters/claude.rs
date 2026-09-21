@@ -421,6 +421,8 @@ pub struct ClaudeAdapter {
     http: reqwest::Client,
     backoff: Backoff,
     paths: Option<ClaudePaths>,
+    /// The usage endpoint. Only tests point this anywhere else.
+    usage_url: String,
     /// Last good reading, reused while we're backing off so the HUD keeps
     /// showing real numbers instead of blanking.
     last_good: Option<(DateTime<Utc>, Vec<UsageWindow>, Option<String>)>,
@@ -432,6 +434,7 @@ impl ClaudeAdapter {
             http,
             backoff: Backoff::default(),
             paths: ClaudePaths::detect(),
+            usage_url: USAGE_URL.to_string(),
             last_good: None,
         }
     }
@@ -442,23 +445,43 @@ impl ClaudeAdapter {
             http,
             backoff: Backoff::default(),
             paths: Some(paths),
+            usage_url: USAGE_URL.to_string(),
             last_good: None,
         }
     }
 
-    /// Find credentials: the file first, then Credential Manager.
+    #[cfg(test)]
+    pub fn with_usage_url(mut self, url: impl Into<String>) -> Self {
+        self.usage_url = url.into();
+        self
+    }
+
+    /// Find credentials: the freshest of the file and Credential Manager.
+    ///
+    /// Claude Code keeps the token in one store or the other depending on how
+    /// the install was set up, and it refreshes in place. When both exist one
+    /// of them can be left over from an earlier sign-in, so taking whichever
+    /// answered first would hand back a token that expired weeks ago while a
+    /// live one sat in the other store. The later expiry is the newer token.
     pub fn credentials(&self) -> Option<Credentials> {
+        let mut found: Vec<Credentials> = Vec::new();
+
         if let Some(paths) = &self.paths {
             if let Ok(raw) = std::fs::read_to_string(paths.credentials_file()) {
-                if let Some(creds) = parse_credentials(&raw) {
-                    return Some(creds);
-                }
+                found.extend(parse_credentials(&raw));
             }
         }
-        CLAUDE_CREDENTIAL_TARGETS
-            .iter()
-            .filter_map(|target| read_generic_credential(target))
-            .find_map(|raw| parse_credentials(&raw))
+        found.extend(
+            CLAUDE_CREDENTIAL_TARGETS
+                .iter()
+                .filter_map(|target| read_generic_credential(target))
+                .filter_map(|raw| parse_credentials(&raw)),
+        );
+
+        // A credential with no recorded expiry can't be compared, so it only
+        // wins when it is all there is.
+        found.sort_by_key(|c| c.expires_at);
+        found.pop()
     }
 
     /// Fetch usage, honouring the back-off schedule.
@@ -475,7 +498,7 @@ impl ClaudeAdapter {
 
         let response = self
             .http
-            .get(USAGE_URL)
+            .get(&self.usage_url)
             .bearer_auth(token)
             .header("anthropic-beta", OAUTH_BETA)
             .header("accept", "application/json")
@@ -599,19 +622,18 @@ impl ClaudeAdapter {
             return snap;
         };
 
-        if creds.is_expired(now) {
-            let windows = Self::transcript_windows(&sessions);
-            let mut snap = ProviderSnapshot::new(ProviderId::ClaudeCode)
-                .with_source("transcripts")
-                .with_account(plan_label(creds.subscription.as_deref()))
-                .with_windows(windows)
-                .with_sessions(sessions);
-            snap.health = Health::NeedsAuth;
-            snap.detail = Some("Token expired; run `claude` to refresh".into());
-            return snap;
-        }
-
         let account = plan_label(creds.subscription.as_deref());
+
+        // Deliberately *not* gated on `creds.is_expired(now)`.
+        //
+        // `expiresAt` describes the short-lived access token, which Claude Code
+        // refreshes from disk whenever it needs to. Between refreshes a
+        // perfectly signed-in account routinely has a timestamp in the past,
+        // and a skewed clock or a credential store that lags the other one does
+        // the same. Refusing to ask meant reporting "token expired" at someone
+        // who was signed in and actively using Claude Code -- and showing no
+        // numbers at all. Only the endpoint knows whether the token works, so
+        // ask it, and let a 401 be the thing that says otherwise.
 
         match self.fetch_usage(&creds.access_token, now).await {
             Ok(Some(windows)) => {
@@ -631,14 +653,23 @@ impl ClaudeAdapter {
             ),
             Err(err) => {
                 tracing::debug!(%err, "claude usage fetch failed");
-                let health = if err.to_string().contains("unauthorized") {
+                let unauthorized = err.to_string().contains("unauthorized");
+                let health = if unauthorized {
                     Health::NeedsAuth
                 } else if self.backoff.is_backing_off() {
                     Health::RateLimited
                 } else {
                     Health::Error
                 };
-                self.degraded_with_last_good(health, err.to_string(), sessions, now)
+                // Now that the endpoint has actually turned the token down,
+                // the local expiry is worth repeating back: it says whether
+                // a refresh is enough or a full sign-in is needed.
+                let detail = match (unauthorized, creds.is_expired(now)) {
+                    (true, true) => "Token expired; run `claude` to refresh".to_string(),
+                    (true, false) => "Sign in again with `claude`".to_string(),
+                    _ => err.to_string(),
+                };
+                self.degraded_with_last_good(health, detail, sessions, now)
             }
         }
     }
@@ -1054,6 +1085,115 @@ mod tests {
         assert_eq!(sessions[0].id, "blocked");
         assert_eq!(sessions[0].activity, Activity::AwaitingInput);
         assert_eq!(sessions[1].activity, Activity::Generating);
+    }
+
+    /// A one-shot HTTP server for the usage endpoint.
+    ///
+    /// Returns its base URL and serves exactly one request, so a test can put
+    /// a real response in front of the adapter without a mocking framework.
+    async fn stub_usage_endpoint(status: &'static str, body: &'static str) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                let mut buf = [0u8; 2048];
+                let _ = socket.read(&mut buf).await;
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = socket.write_all(response.as_bytes()).await;
+                let _ = socket.flush().await;
+            }
+        });
+        format!("http://{addr}/api/oauth/usage")
+    }
+
+    fn signed_in_install(dir: &Path, expires_at: &str) -> ClaudePaths {
+        std::fs::create_dir_all(dir.join("projects")).unwrap();
+        std::fs::write(
+            dir.join(".credentials.json"),
+            format!(
+                r#"{{"claudeAiOauth":{{"accessToken":"sk-ant-oat01-live","refreshToken":"sk-ant-ort01-x","expiresAt":"{expires_at}","subscriptionType":"pro"}}}}"#
+            ),
+        )
+        .unwrap();
+        ClaudePaths {
+            root: dir.to_path_buf(),
+        }
+    }
+
+    /// The body the endpoint returns for a Pro account partway through its
+    /// windows -- the figures Claude Code's own `/usage` shows.
+    const USAGE_BODY: &str = r#"{
+      "five_hour":  {"utilization": 31, "resets_at": "2026-01-01T15:23:00Z"},
+      "seven_day":  {"utilization": 26, "resets_at": "2026-01-03T10:30:00Z"}
+    }"#;
+
+    /// An access token whose recorded expiry has passed is *not* a signed-out
+    /// account. Claude Code refreshes the short-lived token whenever it needs
+    /// to, so a signed-in user routinely has a stale timestamp on disk; a
+    /// skewed clock does the same. Refusing to ask the endpoint reported
+    /// "token expired" at a signed-in user and showed no numbers at all.
+    #[tokio::test]
+    async fn an_expired_looking_token_is_still_tried() {
+        let dir = tempfile::tempdir().unwrap();
+        // Recorded as having expired an hour ago.
+        let paths = signed_in_install(dir.path(), "2026-01-01T11:00:00Z");
+        let url = stub_usage_endpoint("200 OK", USAGE_BODY).await;
+
+        let mut adapter =
+            ClaudeAdapter::with_paths(reqwest::Client::new(), paths).with_usage_url(url);
+        let snap = adapter.collect(at(NOW)).await;
+
+        assert_eq!(snap.health, Health::Ok, "detail: {:?}", snap.detail);
+        assert_eq!(snap.source.as_deref(), Some("oauth"));
+        assert_eq!(snap.account.as_deref(), Some("Pro"));
+        assert_eq!(snap.windows.len(), 2);
+        assert_eq!(snap.windows[0].label, "5h session");
+        assert_eq!(snap.windows[0].used_pct, Some(31.0));
+        assert_eq!(snap.windows[1].label, "7d all models");
+        assert_eq!(snap.windows[1].used_pct, Some(26.0));
+        assert_eq!(snap.peak_pct(), Some(31.0));
+    }
+
+    /// Only the endpoint can say the token is no good -- and when it does, the
+    /// local expiry decides whether a refresh or a fresh sign-in is the advice.
+    #[tokio::test]
+    async fn a_rejected_token_is_what_reports_needing_auth() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = signed_in_install(dir.path(), "2026-01-01T11:00:00Z");
+        let url = stub_usage_endpoint("401 Unauthorized", r#"{"error":"invalid_token"}"#).await;
+
+        let mut adapter =
+            ClaudeAdapter::with_paths(reqwest::Client::new(), paths).with_usage_url(url);
+        let snap = adapter.collect(at(NOW)).await;
+
+        assert_eq!(snap.health, Health::NeedsAuth);
+        assert!(
+            snap.detail
+                .as_deref()
+                .is_some_and(|d| d.contains("refresh")),
+            "expired token should suggest a refresh, got {:?}",
+            snap.detail
+        );
+    }
+
+    /// A token with a *live* expiry that the endpoint still rejects is a real
+    /// sign-out, and should say so rather than blaming an expiry.
+    #[tokio::test]
+    async fn a_live_token_rejected_by_the_endpoint_asks_for_a_sign_in() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = signed_in_install(dir.path(), "2027-01-01T00:00:00Z");
+        let url = stub_usage_endpoint("403 Forbidden", r#"{"error":"forbidden"}"#).await;
+
+        let mut adapter =
+            ClaudeAdapter::with_paths(reqwest::Client::new(), paths).with_usage_url(url);
+        let snap = adapter.collect(at(NOW)).await;
+
+        assert_eq!(snap.health, Health::NeedsAuth);
+        assert_eq!(snap.detail.as_deref(), Some("Sign in again with `claude`"));
     }
 
     #[tokio::test]
