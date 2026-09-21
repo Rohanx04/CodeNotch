@@ -22,7 +22,7 @@ use windows::core::{BOOL, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, POINT, RECT, TRUE, WPARAM};
 use windows::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_SYSTEMBACKDROP_TYPE,
-    DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+    DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
     DWM_SYSTEMBACKDROP_TYPE,
 };
 use windows::Win32::Graphics::Gdi::{
@@ -145,7 +145,14 @@ pub fn move_no_activate(handle: WindowHandle, placement: Placement) -> Result<()
     Ok(())
 }
 
-/// Ask DWM for rounded corners, a dark frame and a backdrop.
+/// Stop the compositor drawing anything of its own around the HUD.
+///
+/// The notch has to read as a shape carved out of the display, which means the
+/// window itself must be invisible: the webview paints the silhouette and the
+/// card, and every pixel outside them stays desktop. So this is not decoration
+/// setup so much as the opposite -- it turns off the frame border, the rounded
+/// window corners and the system backdrop, each of which renders against the
+/// *whole window rectangle* rather than against the notch inside it.
 ///
 /// Every call is best-effort: these attributes are Windows 11 era, and on
 /// Windows 10 they simply return an error we ignore rather than failing setup.
@@ -162,7 +169,15 @@ pub fn apply_appearance(handle: WindowHandle, backdrop: Backdrop) {
             std::mem::size_of::<BOOL>() as u32,
         );
 
-        let corner = DWMWCP_ROUND;
+        // Square the window off rather than rounding it.
+        //
+        // The window rectangle is not the notch: it is sized to hold the strip
+        // and, while open, the popover beside it. Rounding it makes DWM clip
+        // and outline that rectangle, so the notch's own silhouette gets its
+        // corners shaved and a rounded box appears around the empty space. The
+        // shapes that should be rounded already are -- the strip by NotchShape,
+        // the card by its `border-radius`.
+        let corner = DWMWCP_DONOTROUND;
         let _ = DwmSetWindowAttribute(
             hwnd,
             DWMWA_WINDOW_CORNER_PREFERENCE,

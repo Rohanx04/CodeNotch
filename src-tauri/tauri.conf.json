@@ -36,11 +36,7 @@
         "visible": false,
 
         "acceptFirstMouse": true,
-        "dragDropEnabled": false,
-        "windowEffects": {
-          "effects": ["acrylic"],
-          "state": "active"
-        }
+        "dragDropEnabled": false
       }
     ],
     "security": {

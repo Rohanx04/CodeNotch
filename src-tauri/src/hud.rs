@@ -138,7 +138,7 @@ impl Hud {
         };
 
         platform::apply_hud_chrome(handle, config.click_through_when_collapsed)?;
-        platform::apply_appearance(handle, Backdrop::Inherit);
+        platform::apply_appearance(handle, Backdrop::None);
         self.apply()?;
 
         if !config.hidden {
@@ -370,10 +370,8 @@ impl Hud {
 
     /// Apply new settings, re-running the appearance calls the change affects.
     pub fn set_config(&self, config: Config) -> Result<()> {
-        let accent_changed;
         {
             let mut inner = self.inner.lock().expect("hud lock");
-            accent_changed = inner.config.accent_hex() != config.accent_hex();
             // Size and edge changes invalidate what the webview measured.
             if inner.config.size != config.size || inner.config.edge != config.edge {
                 inner.content = None;
@@ -383,10 +381,13 @@ impl Hud {
 
         if let Some(handle) = self.handle() {
             platform::apply_hud_chrome(handle, config.click_through_when_collapsed)?;
-            if accent_changed {
-                platform::apply_appearance(handle, Backdrop::Inherit);
-                platform::refresh_frame(handle);
-            }
+            // Cheap, and none of it depends on the config: re-asserting keeps
+            // the frame suppressed if anything has reset it since setup. (This
+            // used to run only when the accent changed, back when the accent
+            // tinted the window border; it paints the rings and nothing else
+            // now.)
+            platform::apply_appearance(handle, Backdrop::None);
+            platform::refresh_frame(handle);
         }
         self.apply()
     }

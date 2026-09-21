@@ -65,6 +65,7 @@ getting five things right:
 | Stays on top | `HWND_TOPMOST`, re-asserted on every poll (other topmost windows can displace it) |
 | Doesn't swallow clicks while resting | `WS_EX_TRANSPARENT` toggled as the popover opens and closes |
 | Opens on hover *despite* being click-through | the cursor is polled with `GetCursorPos` |
+| Shows nothing but the notch | no window effect, no system backdrop, no frame border, no window rounding |
 
 That last row is the subtle one. A `WS_EX_TRANSPARENT` window receives no mouse
 messages at all — not even `mouseenter` — so a click-through notch can never be
@@ -72,11 +73,22 @@ told the pointer arrived. Hover is therefore driven from Rust by polling the
 cursor against the window rectangle, which is what lets the notch be
 click-through and hoverable at the same time.
 
-Appearance uses `DwmSetWindowAttribute` for immersive dark mode, rounded corners
-and an accent-tinted border, with the acrylic backdrop left to Tauri's own
-window effect so the two mechanisms don't fight. All the Windows 11-era
-attributes are best-effort: on Windows 10 they fail harmlessly and the CSS
-fallback (`backdrop-filter`) carries the look.
+The last row is the one that makes it look built in. The window is bigger than
+the notch — it has to hold the popover alongside the strip, and the silhouette
+tapers away at both ends — so anything the compositor draws against the *window
+rectangle* shows up as a panel around the notch rather than as part of it. An
+acrylic window effect frosts that whole rectangle and rims it in light;
+`DWMWCP_ROUND` rounds and outlines it; a system backdrop fills it. All three are
+therefore off, and the window is left genuinely transparent: the webview paints
+the silhouette and the card, and every other pixel is desktop.
+
+The rounding that *should* be there still is — the strip's by `NotchShape`, the
+card's by its own `border-radius`. The accent lives on the rings, where the
+webview paints it, rather than tinting a frame border.
+
+`DwmSetWindowAttribute` is still used for immersive dark mode. All the Windows
+11-era attributes are best-effort: on Windows 10 they fail harmlessly, and
+there is nothing to fall back to because the look never depended on them.
 
 Clicking a provider card raises that tool's window via `SetForegroundWindow`,
 using the `AttachThreadInput` dance that Windows requires — without it the call
@@ -132,7 +144,7 @@ dependency, so its tests run on any host:
 
 ```bash
 cd src-tauri/core
-cargo test          # 179 tests: adapters, SQLite reader, layout, config, collector
+cargo test          # 181 tests: adapters, SQLite reader, layout, config, collector
 cargo clippy --all-targets
 ```
 
