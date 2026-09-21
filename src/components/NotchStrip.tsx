@@ -44,6 +44,13 @@ export function NotchStrip({
   const shellRef = useRef<HTMLDivElement | null>(null);
   const [shell, setShell] = useState({ width: 0, height: 0 });
 
+  // Everything inside the strip is sized from the metrics rather than in fixed
+  // pixels, so the small/medium/large strips stay the same object at three
+  // scales. `gearSize` mirrors `HudMetrics::settings_extent` in Rust, which is
+  // what reserves room for the gear when the window is sized.
+  const gearSize = Math.round(metrics.stripThickness * 0.55);
+  const ringGap = Math.max(2, Math.round(metrics.ring * 0.16));
+
   // The silhouette is drawn at exact pixel size, so it has to follow the strip
   // as rings come and go.
   useLayoutEffect(() => {
@@ -70,12 +77,16 @@ export function NotchStrip({
       }}
       className="notch-strip"
       data-edge={edge}
-      style={{
-        [vertical ? "width" : "height"]: metrics.stripThickness,
-        padding: vertical
-          ? `${metrics.stripPadding}px 0`
-          : `0 ${metrics.stripPadding}px`,
-      }}
+      style={
+        {
+          [vertical ? "width" : "height"]: metrics.stripThickness,
+          padding: vertical
+            ? `${metrics.stripPadding}px 0`
+            : `0 ${metrics.stripPadding}px`,
+          "--ring-gap": `${ringGap}px`,
+          "--gear-size": `${gearSize}px`,
+        } as React.CSSProperties
+      }
     >
       <NotchShape
         className="notch-silhouette"

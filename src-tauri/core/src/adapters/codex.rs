@@ -162,18 +162,32 @@ pub fn summarise_rollout(path: &Path, now: DateTime<Utc>) -> Option<RolloutSumma
             continue;
         };
 
-        if let Some(ts) = json.get("timestamp").and_then(parse_timestamp) {
+        // Codex wraps every record in an envelope -- `{"timestamp": ..,
+        // "type": "event_msg", "payload": {..}}` -- and everything worth
+        // reading (the rate-limit snapshot, the token totals, the record's real
+        // type) lives inside `payload`, not beside it. Older rollouts wrote the
+        // fields flat, so both levels are searched, innermost first.
+        let payload = json.get("payload");
+        let field = |name: &str| -> Option<&Json> {
+            payload.and_then(|p| p.get(name)).or_else(|| json.get(name))
+        };
+
+        if let Some(ts) = json
+            .get("timestamp")
+            .or_else(|| payload.and_then(|p| p.get("timestamp")))
+            .and_then(parse_timestamp)
+        {
             last_activity = Some(ts);
         }
 
-        if let Some(limits) = json.get("rate_limits") {
+        if let Some(limits) = field("rate_limits") {
             let parsed = parse_rate_limits(limits, now);
             if !parsed.is_empty() {
                 rate_limits = parsed; // keep only the newest snapshot
             }
         }
 
-        if let Some(info) = json.get("info") {
+        if let Some(info) = field("info") {
             if let Some(total) = info
                 .get("total_token_usage")
                 .and_then(|u| u.get("total_tokens"))
@@ -187,16 +201,16 @@ pub fn summarise_rollout(path: &Path, now: DateTime<Utc>) -> Option<RolloutSumma
         }
 
         // Session metadata line, written when the session starts.
-        if let Some(payload) = json.get("payload").or(Some(&json)) {
-            if let Some(cwd) = payload.get("cwd").and_then(Json::as_str) {
-                project = Some(project_label(cwd));
-            }
-            if let Some(m) = payload.get("model").and_then(Json::as_str) {
-                model.get_or_insert_with(|| m.to_string());
-            }
+        if let Some(cwd) = field("cwd").and_then(Json::as_str) {
+            project = Some(project_label(cwd));
+        }
+        if let Some(m) = field("model").and_then(Json::as_str) {
+            model.get_or_insert_with(|| m.to_string());
         }
 
-        match json.get("type").and_then(Json::as_str) {
+        // The envelope's own `type` is the transport kind (`response_item`,
+        // `event_msg`); the item's kind is the one inside the payload.
+        match field("type").and_then(Json::as_str) {
             Some("function_call") | Some("local_shell_call") => pending_call = true,
             Some("function_call_output") | Some("local_shell_call_output") => pending_call = false,
             _ => {}
@@ -456,6 +470,77 @@ mod tests {
         );
         assert_eq!(s.total_tokens, Some(4242));
         assert_eq!(s.model.as_deref(), Some("gpt-5-codex"));
+    }
+
+    /// A rollout in the shape Codex actually writes: every record wrapped in an
+    /// envelope, with the content one level down under `payload`.
+    #[test]
+    fn reads_a_real_rollout_envelope() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_rollout(
+            dir.path(),
+            "rollout-2026-01-01T11-50-00-abc.jsonl",
+            &[
+                format!(
+                    r#"{{"timestamp":"{}","type":"session_meta","payload":{{"id":"abc","cwd":"C:\\dev\\api","cli_version":"0.20.0"}}}}"#,
+                    ts(-600)
+                ),
+                format!(
+                    r#"{{"timestamp":"{}","type":"event_msg","payload":{{"type":"token_count","info":{{"total_token_usage":{{"total_tokens":4242}},"model_context_window":272000}},"rate_limits":{{"primary":{{"used_percent":33.5,"window_minutes":300,"resets_in_seconds":300}},"secondary":{{"used_percent":12.0,"window_minutes":10080,"resets_in_seconds":3600}}}}}}}}"#,
+                    ts(-30)
+                ),
+            ],
+        );
+
+        let s = summarise_rollout(&path, at(NOW)).expect("the rollout should summarise");
+        assert_eq!(
+            s.rate_limits.len(),
+            2,
+            "both windows of the snapshot should be read from the payload"
+        );
+        assert_eq!(s.rate_limits[0].used_pct, Some(33.5));
+        assert_eq!(s.rate_limits[1].used_pct, Some(12.0));
+        assert_eq!(s.total_tokens, Some(4242));
+        assert_eq!(s.project.as_deref(), Some("api"));
+    }
+
+    /// The envelope's own `type` is the transport kind, so the approval
+    /// heuristic has to read the item's type from inside the payload.
+    #[test]
+    fn detects_a_pending_tool_call_inside_an_envelope() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_rollout(
+            dir.path(),
+            "r.jsonl",
+            &[format!(
+                r#"{{"timestamp":"{}","type":"response_item","payload":{{"type":"function_call","name":"shell","call_id":"c1"}}}}"#,
+                ts(-40)
+            )],
+        );
+        assert_eq!(
+            summarise_rollout(&path, at(NOW)).unwrap().activity,
+            Activity::AwaitingInput
+        );
+
+        // ...and the matching output, also inside a payload, clears it.
+        let path = write_rollout(
+            dir.path(),
+            "r2.jsonl",
+            &[
+                format!(
+                    r#"{{"timestamp":"{}","type":"response_item","payload":{{"type":"function_call","call_id":"c1"}}}}"#,
+                    ts(-60)
+                ),
+                format!(
+                    r#"{{"timestamp":"{}","type":"response_item","payload":{{"type":"function_call_output","call_id":"c1"}}}}"#,
+                    ts(-55)
+                ),
+            ],
+        );
+        assert_eq!(
+            summarise_rollout(&path, at(NOW)).unwrap().activity,
+            Activity::Done
+        );
     }
 
     #[test]

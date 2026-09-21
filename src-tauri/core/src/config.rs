@@ -73,12 +73,24 @@ pub struct HudMetrics {
 }
 
 impl HudMetrics {
+    /// Space the settings gear occupies at the tail of the strip.
+    ///
+    /// The gear is a sibling of the rings inside the strip, so it lengthens it
+    /// just as a ring does. Leaving it out of the arithmetic made the window a
+    /// gear shorter than its own contents, which clipped the gear off the end
+    /// until the webview's measurement arrived -- and off the screen entirely
+    /// once the clamp in `layout` kicked in.
+    pub fn settings_extent(&self) -> f64 {
+        self.strip_thickness * 0.55
+    }
+
     /// Resting size of the strip holding `providers` rings, as
     /// (along the edge, into the screen).
     pub fn strip_extent(&self, providers: usize) -> (f64, f64) {
         // Never fewer than one slot: before the first poll there are no
         // providers, and a zero-height strip would simply vanish.
-        let along = self.strip_padding * 2.0 + providers.max(1) as f64 * self.slot;
+        let along =
+            self.strip_padding * 2.0 + providers.max(1) as f64 * self.slot + self.settings_extent();
         (along, self.strip_thickness)
     }
 }
@@ -87,28 +99,28 @@ impl HudSize {
     pub fn metrics(self) -> HudMetrics {
         match self {
             HudSize::Small => HudMetrics {
-                strip_thickness: 78.0,
-                slot: 115.0,
-                strip_padding: 41.0,
-                ring: 49.0,
-                popover_size: 276.0,
-                popover_gap: 42.0,
+                strip_thickness: 32.0,
+                slot: 47.0,
+                strip_padding: 17.0,
+                ring: 20.0,
+                popover_size: 208.0,
+                popover_gap: 17.0,
             },
             HudSize::Medium => HudMetrics {
-                strip_thickness: 92.0,
-                slot: 135.0,
-                strip_padding: 48.0,
-                ring: 58.0,
-                popover_size: 320.0,
-                popover_gap: 50.0,
+                strip_thickness: 40.0,
+                slot: 59.0,
+                strip_padding: 21.0,
+                ring: 25.0,
+                popover_size: 232.0,
+                popover_gap: 22.0,
             },
             HudSize::Large => HudMetrics {
-                strip_thickness: 108.0,
-                slot: 159.0,
-                strip_padding: 57.0,
-                ring: 68.0,
-                popover_size: 368.0,
-                popover_gap: 58.0,
+                strip_thickness: 50.0,
+                slot: 74.0,
+                strip_padding: 27.0,
+                ring: 32.0,
+                popover_size: 264.0,
+                popover_gap: 27.0,
             },
         }
     }
@@ -461,6 +473,108 @@ mod tests {
                     "{size:?} {name} is {ratio:.2}x thickness, expected ~{want:.2}x"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn the_settings_gear_is_part_of_the_strip_length() {
+        // The gear is laid out on the strip alongside the rings. Leaving it out
+        // of the arithmetic made the window shorter than its own contents, so
+        // the gear was clipped off the end.
+        let m = HudSize::Medium.metrics();
+        let (along, _) = m.strip_extent(3);
+        assert_eq!(
+            along,
+            m.strip_padding * 2.0 + 3.0 * m.slot + m.settings_extent()
+        );
+        assert!(m.settings_extent() > 0.0);
+    }
+
+    #[test]
+    fn a_full_strip_stays_a_notch_rather_than_a_sidebar() {
+        // Every provider enabled, at every size, on the smallest work area we
+        // support. A HUD that reaches the bottom of a 1080p desktop is not a
+        // notch -- and at that point the layout clamp starts silently cutting
+        // contents off the end instead.
+        const WORK_AREA_1080P: f64 = 1040.0;
+        for size in [HudSize::Small, HudSize::Medium, HudSize::Large] {
+            let m = size.metrics();
+            let (along, thickness) = m.strip_extent(ProviderId::ALL.len());
+            assert!(
+                along < WORK_AREA_1080P * 0.65,
+                "{size:?} strip is {along}px long on a {WORK_AREA_1080P}px screen"
+            );
+            assert!(
+                along <= crate::layout::MAX_STRIP_LENGTH,
+                "{size:?} strip ({along}px) is clamped by MAX_STRIP_LENGTH, so it would be cut off"
+            );
+            assert!(
+                thickness <= 56.0,
+                "{size:?} strip reaches {thickness}px into the screen"
+            );
+            // Open, the whole HUD still has to leave the desktop usable.
+            assert!(
+                thickness + m.popover_gap + m.popover_size < 360.0,
+                "{size:?} HUD is too deep when a card is open"
+            );
+        }
+    }
+
+    /// The browser preview (`npm run dev`) has no backend, so it carries its own
+    /// copy of the medium metrics. That copy is what the UI is iterated
+    /// against, and it silently went stale once already -- leaving the preview
+    /// showing a notch two and a half times the size of the real one.
+    #[test]
+    fn the_frontend_demo_metrics_match_medium() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../src/lib/demo.ts")
+            .canonicalize();
+        // Vendored builds won't have the frontend beside them; nothing to check.
+        let Ok(path) = path else { return };
+        let Ok(source) = std::fs::read_to_string(&path) else {
+            return;
+        };
+
+        let block = source
+            .split_once("DEMO_METRICS")
+            .and_then(|(_, rest)| rest.split_once('}'))
+            .map(|(block, _)| block.to_string())
+            .expect("DEMO_METRICS should be declared in demo.ts");
+
+        let field = |name: &str| -> f64 {
+            block
+                .split_once(&format!("{name}:"))
+                .and_then(|(_, rest)| rest.split(&[',', '\n'][..]).next())
+                .and_then(|v| v.trim().parse::<f64>().ok())
+                .unwrap_or_else(|| panic!("{name} missing from DEMO_METRICS"))
+        };
+
+        let m = HudSize::Medium.metrics();
+        for (name, demo, rust) in [
+            ("stripThickness", field("stripThickness"), m.strip_thickness),
+            ("slot", field("slot"), m.slot),
+            ("stripPadding", field("stripPadding"), m.strip_padding),
+            ("ring", field("ring"), m.ring),
+            ("popoverSize", field("popoverSize"), m.popover_size),
+            ("popoverGap", field("popoverGap"), m.popover_gap),
+        ] {
+            assert_eq!(
+                demo, rust,
+                "demo.ts {name} is {demo}, but HudSize::Medium says {rust}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_popover_gap_clears_the_card_tail() {
+        // UsagePopover draws a tail 0.4x the strip's thickness; a gap narrower
+        // than that would have the tail crossing into the strip.
+        for size in [HudSize::Small, HudSize::Medium, HudSize::Large] {
+            let m = size.metrics();
+            assert!(
+                m.popover_gap > m.strip_thickness * 0.4,
+                "{size:?} tail overlaps the strip"
+            );
         }
     }
 
