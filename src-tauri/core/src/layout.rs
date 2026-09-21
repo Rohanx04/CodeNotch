@@ -132,6 +132,20 @@ pub fn hud_extent(
     let (along, thickness) = metrics.strip_extent(providers);
     let open_depth = thickness + metrics.popover_gap + metrics.popover_size;
 
+    // How deep the window is allowed to get once a card is open.
+    //
+    // The card is laid out `popover_size` wide on every edge. On a left/right
+    // edge that width is also its depth, so `open_depth` is exactly right and
+    // doubles as the ceiling. On a top/bottom edge the depth is the card's
+    // height, which its content decides and which has nothing to do with its
+    // width -- capping it at `open_depth` there cut tall cards off, so the
+    // ceiling becomes the tallest card we will render.
+    let max_depth = if edge.is_horizontal() {
+        thickness + metrics.popover_gap + MAX_POPOVER_LENGTH
+    } else {
+        open_depth
+    };
+
     let (fallback_w, fallback_h) = if edge.is_horizontal() {
         (along, if open { open_depth } else { thickness })
     } else {
@@ -148,11 +162,11 @@ pub fn hud_extent(
     if edge.is_horizontal() {
         (
             w.clamp(metrics.slot, max_along),
-            h.clamp(thickness, open_depth),
+            h.clamp(thickness, max_depth),
         )
     } else {
         (
-            w.clamp(thickness, open_depth),
+            w.clamp(thickness, max_depth),
             h.clamp(metrics.slot, max_along),
         )
     }
@@ -356,6 +370,42 @@ mod extent_tests {
             Some((m().strip_thickness, 430.0)),
         );
         assert_eq!(w, m().strip_thickness);
+    }
+
+    /// On a top/bottom edge the card's depth is its *height*, set by its
+    /// content, while `popover_size` is its width. The window has to follow the
+    /// measurement both ways: a short card must not leave a slab of dead
+    /// window above it, and a tall one must not be cut off.
+    #[test]
+    fn a_horizontal_edge_follows_the_cards_real_height() {
+        let m = m();
+        let strip = m.strip_extent(3).0;
+
+        // A short card -- one line of detail, no windows, no sessions.
+        let short = m.strip_thickness + m.popover_gap + 85.0;
+        let (_, h) = hud_extent(m, Edge::Bottom, 3, true, Some((strip, short)));
+        assert_eq!(h, short, "the window should shrink to a short card");
+        assert!(
+            h < m.strip_thickness + m.popover_gap + m.popover_size,
+            "a short card should not hold the window open to the card's width"
+        );
+
+        // A tall card -- two usage windows and a session list.
+        let tall = m.strip_thickness + m.popover_gap + 251.0;
+        assert!(tall > m.strip_thickness + m.popover_gap + m.popover_size);
+        let (_, h) = hud_extent(m, Edge::Bottom, 3, true, Some((strip, tall)));
+        assert_eq!(h, tall, "a tall card must not be clipped by the window");
+    }
+
+    /// The same card on a left/right edge is a different story: there the
+    /// depth axis is the card's width, which really is `popover_size`, so the
+    /// ceiling stays tight.
+    #[test]
+    fn a_vertical_edge_still_caps_depth_at_the_card_width() {
+        let m = m();
+        let open = m.strip_thickness + m.popover_gap + m.popover_size;
+        let (w, _) = hud_extent(m, Edge::Right, 3, true, Some((9000.0, 400.0)));
+        assert_eq!(w, open);
     }
 
     #[test]

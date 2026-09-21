@@ -144,7 +144,7 @@ dependency, so its tests run on any host:
 
 ```bash
 cd src-tauri/core
-cargo test          # 179 tests: adapters, SQLite reader, layout, config, collector
+cargo test          # 181 tests: adapters, SQLite reader, layout, config, collector
 cargo clippy --all-targets
 ```
 

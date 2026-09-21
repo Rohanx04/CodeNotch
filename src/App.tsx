@@ -150,9 +150,17 @@ export default function App() {
       // Round up: a fractional size leaves a hairline of transparent window.
       const length = Math.ceil(Math.max(stripLength, popLength));
 
+      // Measure the depth too, rather than assuming `popoverSize`.
+      //
+      // The card is laid out `popoverSize` wide whichever edge it is on. On a
+      // left/right edge that width *is* the depth, so the two agree. On a
+      // top/bottom edge the depth is the card's height, which its content
+      // decides -- so using `popoverSize` there sized the window from the
+      // card's width, an unrelated axis. A short card left a slab of dead
+      // window above it, and a tall one was cut off at the top.
+      const popDepth = popBox ? (vertical ? popBox.width : popBox.height) : 0;
       const depth = Math.ceil(
-        metrics.stripThickness +
-          (popBox ? metrics.popoverGap + metrics.popoverSize : 0),
+        metrics.stripThickness + (popBox ? metrics.popoverGap + popDepth : 0),
       );
 
       setPopoverLength(popLength);
