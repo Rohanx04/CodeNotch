@@ -21,13 +21,12 @@ pub type WindowHandle = isize;
 /// Which desktop compositor effect to request behind the HUD.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Backdrop {
-    /// Don't touch the backdrop.
+    /// Don't touch the backdrop, whatever the window already has.
     ///
-    /// This is the default, because `tauri.conf.json` already declares an
-    /// `acrylic` window effect and Tauri applies it through the path that also
-    /// works on Windows 10. Setting `DWMWA_SYSTEMBACKDROP_TYPE` on top of that
-    /// means two different mechanisms fighting over the same surface, with the
-    /// result depending on which ran last.
+    /// Only useful when something else owns the surface. The HUD asks for
+    /// [`Backdrop::None`] instead: it wants no backdrop at all, and leaving the
+    /// attribute alone lets Windows apply its own default to a transparent
+    /// tool window.
     Inherit,
     /// Win11 "transient window" acrylic: the frosted look, best over content.
     Acrylic,
