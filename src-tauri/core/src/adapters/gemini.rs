@@ -83,8 +83,29 @@ pub fn parse_account(raw: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Whether credentials exist and, if the blob says so, when they expire.
-pub fn parse_credentials(raw: &str) -> Option<Option<DateTime<Utc>>> {
+/// What the cached OAuth blob says about the sign-in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GeminiCredentials {
+    /// When the short-lived access token lapses, if the blob records it.
+    pub expires_at: Option<DateTime<Utc>>,
+    /// A refresh token is present, so the CLI can renew itself silently.
+    pub can_refresh: bool,
+}
+
+impl GeminiCredentials {
+    /// Whether the user actually has to sign in again.
+    ///
+    /// Google's access tokens last an hour and the CLI refreshes them from the
+    /// refresh token whenever it runs, so an expiry in the past is the normal
+    /// resting state of a signed-in account -- not a signed-out one. Only a
+    /// lapsed token with nothing to renew it needs the user.
+    pub fn needs_sign_in(&self, now: DateTime<Utc>) -> bool {
+        !self.can_refresh && self.expires_at.is_some_and(|e| now >= e)
+    }
+}
+
+/// Whether credentials exist and what they say about the sign-in.
+pub fn parse_credentials(raw: &str) -> Option<GeminiCredentials> {
     let json: Json = serde_json::from_str(raw).ok()?;
     let has_token = json
         .get("access_token")
@@ -94,11 +115,17 @@ pub fn parse_credentials(raw: &str) -> Option<Option<DateTime<Utc>>> {
     if !has_token {
         return None;
     }
-    Some(
-        json.get("expiry_date")
+    Some(GeminiCredentials {
+        expires_at: json
+            .get("expiry_date")
             .or_else(|| json.get("expiryDate"))
             .and_then(parse_timestamp),
-    )
+        can_refresh: json
+            .get("refresh_token")
+            .or_else(|| json.get("refreshToken"))
+            .and_then(Json::as_str)
+            .is_some_and(|s| !s.is_empty()),
+    })
 }
 
 /// Pull a quota out of a settings/state blob, if one is ever cached there.
@@ -303,7 +330,7 @@ impl GeminiAdapter {
                 snap.health = Health::NeedsAuth;
                 snap.detail = Some("Run `gemini` to sign in".into());
             }
-            Some(expiry) if expiry.is_some_and(|e| now >= e) => {
+            Some(creds) if creds.needs_sign_in(now) => {
                 snap.health = Health::NeedsAuth;
                 snap.detail = Some("Sign-in expired; run `gemini` to refresh".into());
             }
@@ -348,19 +375,47 @@ mod tests {
     }
 
     #[test]
-    fn credentials_report_presence_and_expiry() {
-        let creds = parse_credentials(r#"{"access_token":"ya29.x","expiry_date":1767272400000}"#);
-        assert_eq!(creds, Some(Some(at("2026-01-01T13:00:00Z"))));
+    fn credentials_report_presence_expiry_and_refreshability() {
+        let creds =
+            parse_credentials(r#"{"access_token":"ya29.x","expiry_date":1767272400000}"#).unwrap();
+        assert_eq!(creds.expires_at, Some(at("2026-01-01T13:00:00Z")));
+        assert!(!creds.can_refresh);
+
+        let creds = parse_credentials(
+            r#"{"access_token":"ya29.x","refresh_token":"1//r","expiry_date":1767272400000}"#,
+        )
+        .unwrap();
+        assert!(creds.can_refresh);
 
         // Present but with no expiry recorded.
-        assert_eq!(
-            parse_credentials(r#"{"access_token":"ya29.x"}"#),
-            Some(None)
-        );
+        let creds = parse_credentials(r#"{"access_token":"ya29.x"}"#).unwrap();
+        assert_eq!(creds.expires_at, None);
 
         // No token at all means not signed in.
         assert_eq!(parse_credentials(r#"{"refresh_token":"x"}"#), None);
         assert_eq!(parse_credentials("{}"), None);
+    }
+
+    /// Google's access tokens last an hour and the CLI renews them from the
+    /// refresh token, so a lapsed expiry beside a refresh token is what a
+    /// signed-in account looks like most of the time -- not a sign-out.
+    #[test]
+    fn a_lapsed_token_with_a_refresh_token_is_still_signed_in() {
+        let now = at(NOW);
+        let renewable = parse_credentials(
+            r#"{"access_token":"ya29.x","refresh_token":"1//r","expiry_date":1767225600000}"#,
+        )
+        .unwrap();
+        assert!(renewable.expires_at.is_some_and(|e| now >= e), "has lapsed");
+        assert!(
+            !renewable.needs_sign_in(now),
+            "the CLI can renew this without the user"
+        );
+
+        // With nothing to renew it, the user really does have to sign in.
+        let stranded =
+            parse_credentials(r#"{"access_token":"ya29.x","expiry_date":1767225600000}"#).unwrap();
+        assert!(stranded.needs_sign_in(now));
     }
 
     #[test]
