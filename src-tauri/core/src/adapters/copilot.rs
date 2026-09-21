@@ -241,6 +241,24 @@ pub fn scan_dir(dir: &Path) -> Option<CopilotState> {
     }
 }
 
+/// Fold a second directory's findings into the first.
+///
+/// Whichever side actually carries quota numbers wins the quotas; the rest is
+/// filled in from either, so a login name found in one folder and a plan found
+/// in another end up on the same card.
+fn merge_state(a: CopilotState, b: CopilotState) -> CopilotState {
+    let (mut keep, other) = if a.quotas.is_empty() && !b.quotas.is_empty() {
+        (b, a)
+    } else {
+        (a, b)
+    };
+    keep.plan = keep.plan.or(other.plan);
+    keep.user = keep.user.or(other.user);
+    keep.quota_resets_at = keep.quota_resets_at.or(other.quota_resets_at);
+    keep.signed_in |= other.signed_in;
+    keep
+}
+
 /// Convert quota buckets into usage windows.
 ///
 /// Copilot reports what's *left*, so it has to be inverted into "used" for a
@@ -320,7 +338,17 @@ impl CopilotAdapter {
             );
         }
 
-        let state = self.paths.dirs.iter().find_map(|d| scan_dir(d));
+        // Every directory is scanned, not just the first that answers. The
+        // editor plugin's folder usually holds only `apps.json` -- proof of a
+        // sign-in and nothing more -- while the quota snapshot sits in the CLI's
+        // folder further down the list. Stopping at the first hit reported the
+        // account with no numbers beside it and never looked again.
+        let state = self
+            .paths
+            .dirs
+            .iter()
+            .filter_map(|d| scan_dir(d))
+            .reduce(merge_state);
 
         let Some(state) = state else {
             return ProviderSnapshot::degraded(
@@ -459,6 +487,44 @@ mod tests {
         assert_eq!(state.plan.as_deref(), Some("Individual"));
         assert_eq!(state.quotas.len(), 3);
         assert!(state.signed_in);
+    }
+
+    /// The editor plugin's folder normally holds nothing but `apps.json`, while
+    /// the CLI's folder holds the quota snapshot. Both have to be read: the
+    /// first answer is a sign-in with no numbers, and stopping there left the
+    /// card permanently empty.
+    #[test]
+    fn a_quota_in_a_later_directory_is_still_found() {
+        let root = tempfile::tempdir().unwrap();
+        let editor = root.path().join("github-copilot");
+        let cli = root.path().join(".copilot");
+        std::fs::create_dir_all(&editor).unwrap();
+        std::fs::create_dir_all(&cli).unwrap();
+
+        std::fs::write(
+            editor.join("apps.json"),
+            r#"{"github.com:Iv1.x":{"user":"octocat"}}"#,
+        )
+        .unwrap();
+        std::fs::write(cli.join("user.json"), USER_PAYLOAD).unwrap();
+
+        let mut adapter = CopilotAdapter::with_paths(CopilotPaths {
+            dirs: vec![editor, cli],
+        });
+        let snap = adapter.collect(at(NOW));
+
+        assert_eq!(snap.health, Health::Ok);
+        assert!(
+            !snap.windows.is_empty(),
+            "the quota cache in the second directory should be read"
+        );
+        assert!(
+            snap.account
+                .as_deref()
+                .is_some_and(|a| a.contains("octocat")),
+            "the sign-in from the first directory should survive the merge, got {:?}",
+            snap.account
+        );
     }
 
     #[test]

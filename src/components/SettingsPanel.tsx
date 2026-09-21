@@ -131,7 +131,9 @@ export function SettingsPanel({
         <span className="tnum text-[9px] text-notch-faint">v{version}</span>
       </div>
 
-      <div className="thin-scroll max-h-[420px] overflow-y-auto px-2.5 py-1">
+      {/* Kept under layout::MAX_POPOVER_LENGTH once the header is added, so the
+          window clamp never cuts the bottom of the panel off. */}
+      <div className="thin-scroll max-h-[380px] overflow-y-auto px-2.5 py-1">
         <Row label="Screen edge">
           <SegmentedControl
             value={config.edge}

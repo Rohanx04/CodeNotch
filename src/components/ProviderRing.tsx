@@ -47,16 +47,17 @@ export function ProviderRing({
   const pct = peakOf(provider);
   const colour = toneColour(pct, provider.health);
 
-  // Bold enough to read as a gauge across the room, not a hairline. An eighth
-  // of the diameter is what the reference uses.
-  const stroke = Math.max(3.5, size * 0.125);
+  // Bold enough to read as a gauge at a glance, without the ring closing up on
+  // itself: at notch scale an eighth of the diameter leaves barely any hole for
+  // the brand mark, so the stroke is a ninth with a hairline floor.
+  const stroke = Math.max(2.5, size * 0.11);
   const radius = (size - stroke) / 2;
   const circumference = 2 * Math.PI * radius;
   const fraction = pct === null ? 0 : Math.min(Math.max(pct, 0), 100) / 100;
 
   const generating = provider.activity === "generating";
   const waiting = provider.activity === "awaitingInput";
-  const iconSize = Math.round(size * 0.385);
+  const iconSize = Math.max(8, Math.round(size * 0.42));
 
   return (
     <button
@@ -126,7 +127,12 @@ export function ProviderRing({
         />
       </span>
 
-      <span className="ring-pct tnum" style={{ fontSize: Math.round(size * 0.355) }}>
+      {/* The floor matters more than the ratio at the small end: below 9px the
+          percentage stops being legible, and it is the number people read. */}
+      <span
+        className="ring-pct tnum"
+        style={{ fontSize: Math.max(9, Math.round(size * 0.4)) }}
+      >
         {pct === null ? "—" : formatPct(pct)}
       </span>
     </button>

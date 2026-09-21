@@ -14,7 +14,7 @@ Rust backend and a React frontend.
                           │  ◕   │   screen edge, one ring per provider,
                           │ 86%  │   click-through so it never eats a click
    ┌────────────────────╮ │      │
-   │ ✳ Claude Code Usage│ │  ◔   │
+   │ ✳ Claude Code      │ │  ◔   │
    │ Max                │◄┤ 41%  │   hover a ring: a card opens beside it,
    │ 5h session   1h 36m│ │      │   its tail pointing back at the ring
    │ ▓▓▓▓▓▓▓▓▓▓▓▓▓░░░░  │ │  ◕   │
@@ -132,7 +132,7 @@ dependency, so its tests run on any host:
 
 ```bash
 cd src-tauri/core
-cargo test          # 171 tests: adapters, SQLite reader, layout, config, collector
+cargo test          # 179 tests: adapters, SQLite reader, layout, config, collector
 cargo clippy --all-targets
 ```
 

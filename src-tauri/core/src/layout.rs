@@ -102,9 +102,14 @@ fn clamp_axis(start: i32, size: i32, origin: i32, extent: i32) -> i32 {
 }
 
 /// Longest the strip may grow along its edge before its list scrolls instead.
-pub const MAX_STRIP_LENGTH: f64 = 1000.0;
+///
+/// A HUD that reaches the full height of the display is a sidebar, not a notch,
+/// so this sits well inside a 1080p work area: even the large size with every
+/// provider enabled comes in under it, and the clamp is a backstop rather than
+/// something the default layout runs into.
+pub const MAX_STRIP_LENGTH: f64 = 640.0;
 /// Tallest the detail popover may grow.
-pub const MAX_POPOVER_LENGTH: f64 = 560.0;
+pub const MAX_POPOVER_LENGTH: f64 = 460.0;
 
 /// Logical size of the whole HUD window.
 ///

@@ -102,7 +102,10 @@ export function UsagePopover({
 
       <header className="popover-head">
         <BrandIcon provider={provider.id} className="popover-mark" />
-        <span className="popover-title">{provider.name} Usage</span>
+        {/* Just the name: at notch width "Claude Code Usage" truncates, and the
+            bars underneath already say this is a usage card. The dialog's
+            aria-label still spells it out for screen readers. */}
+        <span className="popover-title">{provider.name}</span>
         {activity && (
           <span
             className="popover-activity"
