@@ -98,7 +98,13 @@ export function ProviderRing({
                 strokeLinecap="round"
                 strokeDasharray={`${circumference * fraction} ${circumference}`}
                 className={waiting ? "activity-pulse" : undefined}
-                style={{ transition: "stroke-dasharray 500ms ease, stroke 300ms ease" }}
+                style={{
+                  // The arc sweeps to its new level on the shared curve; the
+                  // colour crosses the traffic-light boundary a little slower
+                  // so green->amber->red reads as a blend, not a switch.
+                  transition:
+                    "stroke-dasharray 620ms var(--ease-liquid), stroke 420ms ease",
+                }}
               />
             )}
             {generating && (

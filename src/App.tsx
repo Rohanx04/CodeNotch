@@ -51,6 +51,9 @@ export default function App() {
   const [activeId, setActiveId] = useState<string | null>(null);
 
   const closeTimer = useRef<number | null>(null);
+  // Which card is on screen, so opening one can be told apart from moving
+  // between two. See `entering` below.
+  const shownCard = useRef<string | null>(null);
   const stripRef = useRef<HTMLDivElement | null>(null);
   const popoverRef = useRef<HTMLDivElement | null>(null);
   const [tailAnchor, setTailAnchor] = useState<number | null>(null);
@@ -142,11 +145,19 @@ export default function App() {
     if (!strip) return;
 
     const report = () => {
-      const stripBox = strip.getBoundingClientRect();
-      const popBox = popoverRef.current?.getBoundingClientRect();
+      // `offsetWidth`/`offsetHeight`, not `getBoundingClientRect`.
+      //
+      // The rect includes any transform currently in flight, and the card
+      // enters on a scale. Measuring through that reported the card up to 1.5%
+      // smaller than it is (247.2 climbing to 251 over the entrance), so the
+      // window was briefly sized too small -- clipping the card mid-animation
+      // and costing an extra native resize when it settled. The offset sizes
+      // are the laid-out box and ignore transforms, which is exactly what the
+      // window needs to be built around.
+      const popEl = popoverRef.current;
 
-      const stripLength = vertical ? stripBox.height : stripBox.width;
-      const popLength = popBox ? (vertical ? popBox.height : popBox.width) : 0;
+      const stripLength = vertical ? strip.offsetHeight : strip.offsetWidth;
+      const popLength = popEl ? (vertical ? popEl.offsetHeight : popEl.offsetWidth) : 0;
       // Round up: a fractional size leaves a hairline of transparent window.
       const length = Math.ceil(Math.max(stripLength, popLength));
 
@@ -158,9 +169,9 @@ export default function App() {
       // decides -- so using `popoverSize` there sized the window from the
       // card's width, an unrelated axis. A short card left a slab of dead
       // window above it, and a tall one was cut off at the top.
-      const popDepth = popBox ? (vertical ? popBox.width : popBox.height) : 0;
+      const popDepth = popEl ? (vertical ? popEl.offsetWidth : popEl.offsetHeight) : 0;
       const depth = Math.ceil(
-        metrics.stripThickness + (popBox ? metrics.popoverGap + popDepth : 0),
+        metrics.stripThickness + (popEl ? metrics.popoverGap + popDepth : 0),
       );
 
       setPopoverLength(popLength);
@@ -256,29 +267,65 @@ export default function App() {
     return { popoverStart: start, tailOffset: offset };
   }, [vertical, tailAnchor, popoverLength, metrics, activeId]);
 
+  /**
+   * Opening a card, versus moving between rings.
+   *
+   * Opening deserves an entrance -- it fades in and swells out of the strip.
+   * Sliding from one ring to the next is a different gesture: the card is
+   * already on screen, so replaying the entrance makes it blink. It glides to
+   * the new ring instead, tail tracking the way, which is the motion that sells
+   * the notch as one object rather than a card being swapped out.
+   *
+   * The entrance class is applied to the node rather than rendered, because the
+   * measurement effects below re-render this component several times while the
+   * card is still animating in. Deriving the class during render meant the
+   * second of those renders swapped it out and killed the animation partway.
+   */
+  const cardKey = showSettings ? "settings" : activeId;
+  useLayoutEffect(() => {
+    const node = popoverRef.current;
+    if (!node) {
+      shownCard.current = null;
+      return;
+    }
+    node.classList.toggle("card-enter", shownCard.current === null);
+    shownCard.current = cardKey;
+  }, [cardKey]);
+
+  /** Where the card slides in from: out of the strip, on whichever edge. */
+  const enterOffset = vertical
+    ? { "--enter-x": edge === "right" ? "7px" : "-7px", "--enter-y": "0px" }
+    : { "--enter-x": "0px", "--enter-y": edge === "bottom" ? "7px" : "-7px" };
+
+  // `notch-card` carries the glide; `card-enter` is added above, on open only.
+  const cardClass = "absolute notch-card";
+
   // The strip hugs the edge; the popover fills the rest of the window.
   const stripStyle: React.CSSProperties = vertical
     ? { [edge === "right" ? "right" : "left"]: 0, top: 0, bottom: 0 }
     : { [edge === "bottom" ? "bottom" : "top"]: 0, left: 0, right: 0 };
 
-  const popoverStyle: React.CSSProperties = vertical
-    ? {
-        [edge === "right" ? "right" : "left"]:
-          metrics.stripThickness + metrics.popoverGap,
-        width: metrics.popoverSize,
-        top: popoverStart,
-      }
-    : {
-        [edge === "bottom" ? "bottom" : "top"]:
-          metrics.stripThickness + metrics.popoverGap,
-        width: metrics.popoverSize,
-        left: popoverStart,
-      };
+  const popoverStyle = {
+    ...enterOffset,
+    ...(vertical
+      ? {
+          [edge === "right" ? "right" : "left"]:
+            metrics.stripThickness + metrics.popoverGap,
+          width: metrics.popoverSize,
+          top: popoverStart,
+        }
+      : {
+          [edge === "bottom" ? "bottom" : "top"]:
+            metrics.stripThickness + metrics.popoverGap,
+          width: metrics.popoverSize,
+          left: popoverStart,
+        }),
+  } as React.CSSProperties;
 
   return (
     <div className="relative h-full w-full" onMouseLeave={() => handleHover(null)}>
       {active && !showSettings && (
-        <div ref={popoverRef} className="absolute reveal" style={popoverStyle}>
+        <div ref={popoverRef} className={cardClass} style={popoverStyle}>
           <UsagePopover
             provider={active}
             config={config}
@@ -291,7 +338,7 @@ export default function App() {
       )}
 
       {showSettings && (
-        <div ref={popoverRef} className="absolute reveal" style={popoverStyle}>
+        <div ref={popoverRef} className={cardClass} style={popoverStyle}>
           <div className="popover popover-flush">
             <SettingsPanel
               config={config}
