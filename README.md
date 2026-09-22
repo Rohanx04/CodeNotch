@@ -100,6 +100,27 @@ Clicking a provider card raises that tool's window via `SetForegroundWindow`,
 using the `AttachThreadInput` dance that Windows requires — without it the call
 silently no-ops and the taskbar button just flashes.
 
+## Motion
+
+The notch should read as one object that moves, not a set of panels that
+appear. Opening a card swells it out of the strip — from whichever edge the
+notch is docked to — and its contents rise in a short stagger behind it. Moving
+between rings is a different gesture: the card is already on screen, so it
+glides along the edge to the new ring with the tail tracking it, rather than
+replaying the entrance and blinking.
+
+One constraint shapes all of it. The webview measures its own layout and reports
+it to Rust, which resizes the native window — so **animating any property that
+changes the laid-out size would fire a `SetWindowPos` every frame**. Motion is
+therefore transform, opacity and position only, never width or height, and the
+size is measured with `offsetWidth`/`offsetHeight` rather than
+`getBoundingClientRect`, whose result includes whatever transform is mid-flight.
+Measuring through the entrance transform reported the card up to 1.5% small,
+which briefly sized the window under its own contents.
+
+`prefers-reduced-motion` is honoured with a blanket rule rather than a list of
+selectors, so motion added later is covered by default.
+
 ## Requirements
 
 - Windows 10 (1809+) or Windows 11, 64-bit

@@ -32,6 +32,26 @@
 
   /* Overwritten from the config's accent at runtime. */
   --accent: #22d3ee;
+
+  /*
+   * Motion.
+   *
+   * One curve for almost everything, so the notch moves like a single object
+   * rather than a pile of independently-tuned widgets. It leaves fast and
+   * settles slowly with no overshoot -- the shape that reads as weight rather
+   * than as a bounce. `--ease-spring` is the one exception, for the ring
+   * lifting under the pointer, where a touch of overshoot feels alive.
+   *
+   * Nothing here animates a property that changes the laid-out size. The
+   * webview reports its size to Rust, which resizes the native window, so
+   * animating width or height would fire a `SetWindowPos` every frame. Motion
+   * is transform, opacity and position only.
+   */
+  --ease-liquid: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+  --dur-quick: 140ms;
+  --dur-card: 260ms;
+  --dur-glide: 300ms;
 }
 
 /*
@@ -119,11 +139,18 @@ body {
   background: none;
   color: var(--ink-faint);
   cursor: pointer;
-  transition: color 140ms ease, background-color 140ms ease;
+  transition:
+    color var(--dur-quick) ease,
+    background-color var(--dur-quick) ease;
 }
 .strip-settings svg {
   width: 60%;
   height: 60%;
+  transition: transform var(--dur-card) var(--ease-spring);
+}
+.strip-settings:hover svg,
+.strip-settings[data-active] svg {
+  transform: rotate(90deg);
 }
 .strip-settings:hover,
 .strip-settings[data-active] {
@@ -143,11 +170,17 @@ body {
   background: none;
   color: inherit;
   cursor: pointer;
-  transition: transform 160ms cubic-bezier(0.2, 0.9, 0.3, 1);
+  transition: transform 240ms var(--ease-spring);
+  will-change: transform;
 }
 .ring-slot:hover,
 .ring-slot[data-active] {
-  transform: scale(1.06);
+  transform: scale(1.09);
+}
+/* Pressing pulls it back in, so a click has some give. */
+.ring-slot:active {
+  transform: scale(1.02);
+  transition-duration: 90ms;
 }
 .ring-slot:focus-visible {
   outline: 2px solid var(--accent);
@@ -321,7 +354,9 @@ body {
 .usage-fill {
   height: 100%;
   border-radius: 999px;
-  transition: width 500ms cubic-bezier(0.2, 0.9, 0.3, 1);
+  transition:
+    width 620ms var(--ease-liquid),
+    background-color 320ms ease;
 }
 .usage-fill[data-tone="low"] {
   background: var(--tone-low);
@@ -371,10 +406,13 @@ body {
   color: inherit;
   cursor: pointer;
   text-align: left;
-  transition: background-color 120ms ease;
+  transition:
+    background-color var(--dur-quick) ease,
+    transform var(--dur-quick) var(--ease-liquid);
 }
 .session-row:hover {
   background: rgb(255 255 255 / 0.06);
+  transform: translateX(2px);
 }
 
 .session-dot {
@@ -436,27 +474,111 @@ body {
   animation: notch-pulse 1.6s ease-in-out infinite;
 }
 
+/*
+ * The card appearing: it swells out of the strip and settles.
+ *
+ * `--enter-x` / `--enter-y` are set per edge in App.tsx, so it always emerges
+ * from the strip rather than always sliding in from the right. `translate3d`
+ * keeps it on the compositor.
+ */
 @keyframes notch-reveal {
   from {
     opacity: 0;
-    transform: translateX(6px) scale(0.985);
+    transform: translate3d(var(--enter-x, 7px), var(--enter-y, 0px), 0) scale(0.97);
   }
   to {
     opacity: 1;
-    transform: translateX(0) scale(1);
+    transform: translate3d(0, 0, 0) scale(1);
   }
 }
-.reveal {
-  animation: notch-reveal 150ms cubic-bezier(0.2, 0.9, 0.3, 1) both;
+.card-enter {
+  animation: notch-reveal var(--dur-card) var(--ease-liquid) both;
+  will-change: transform, opacity;
 }
 
+/*
+ * The card moving between rings.
+ *
+ * Already on screen, so no entrance -- it slides along the edge to the new
+ * ring. Position only: an absolutely-positioned card has no siblings to
+ * reflow, and its box never changes, so the window is never resized mid-flight.
+ */
+.notch-card {
+  transition:
+    top var(--dur-glide) var(--ease-liquid),
+    left var(--dur-glide) var(--ease-liquid);
+}
+
+/* The tail slides along the card's edge to keep pointing at the live ring. */
+.notch-card .popover-tail {
+  transition:
+    top var(--dur-glide) var(--ease-liquid),
+    left var(--dur-glide) var(--ease-liquid);
+}
+
+/*
+ * The card's contents arriving, a beat behind the card itself and staggered
+ * down the list, so it reads as filling up rather than being stamped on.
+ * Transform and opacity only, so the measured height is final from frame one.
+ */
+@keyframes notch-rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 4px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+.card-enter .popover-head,
+.card-enter .popover-account,
+.card-enter .usage-block,
+.card-enter .popover-empty,
+.card-enter .session-row {
+  animation: notch-rise 240ms var(--ease-liquid) both;
+}
+.card-enter .popover-account {
+  animation-delay: 20ms;
+}
+.card-enter .usage-block:nth-child(1) {
+  animation-delay: 40ms;
+}
+.card-enter .usage-block:nth-child(2) {
+  animation-delay: 70ms;
+}
+.card-enter .usage-block:nth-child(n + 3) {
+  animation-delay: 100ms;
+}
+.card-enter .session-row {
+  animation-delay: 120ms;
+}
+
+/*
+ * Reduced motion: everything still works, nothing moves.
+ *
+ * Deliberately a blanket rule rather than a list -- the previous one named four
+ * selectors and silently stopped covering anything added afterwards. Opacity is
+ * left alone so the card still fades rather than popping, which is motion-free.
+ */
 @media (prefers-reduced-motion: reduce) {
-  .activity-spin,
-  .activity-pulse,
-  .reveal,
-  .ring-slot {
-    animation: none;
-    transition: none;
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .ring-slot:hover,
+  .ring-slot[data-active],
+  .ring-slot:active,
+  .session-row:hover {
+    transform: none;
+  }
+  .strip-settings:hover svg,
+  .strip-settings[data-active] svg {
+    transform: none;
   }
 }
 
