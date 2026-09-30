@@ -6,8 +6,7 @@
 
 use anyhow::Result;
 
-use codenotch_core::config::Edge;
-use codenotch_core::layout::{place, Placement, WorkArea};
+use codenotch_core::layout::{Placement, WorkArea};
 
 use super::{Backdrop, WindowHandle};
 
@@ -64,19 +63,8 @@ pub fn window_scale(_handle: WindowHandle) -> f64 {
     1.0
 }
 
-pub fn dock(
-    handle: WindowHandle,
-    monitor: Option<usize>,
-    edge: Edge,
-    offset: f32,
-    margin: f64,
-    logical_width: f64,
-    logical_height: f64,
-) -> Result<Placement> {
-    let area = work_area_for(monitor).unwrap_or(WorkArea::new(0, 0, 1920, 1040, 1.0));
-    let placement = place(area, edge, offset, margin, logical_width, logical_height);
-    move_no_activate(handle, placement)?;
-    Ok(placement)
+pub fn work_area(_handle: WindowHandle, monitor: Option<usize>) -> Result<WorkArea> {
+    Ok(work_area_for(monitor).unwrap_or(WorkArea::new(0, 0, 1920, 1040, 1.0)))
 }
 
 pub fn focus_provider_window(_process_names: &[&str], _title_hint: Option<&str>) -> Result<bool> {
@@ -95,5 +83,9 @@ pub fn refresh_frame(_handle: WindowHandle) {}
 
 /// No cursor to report; the stub relies on the webview's own hover events.
 pub fn cursor_pos() -> Option<(i32, i32)> {
+    None
+}
+
+pub fn current_user_sid() -> Option<String> {
     None
 }

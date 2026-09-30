@@ -111,81 +111,164 @@ pub const MAX_STRIP_LENGTH: f64 = 640.0;
 /// Tallest the detail popover may grow.
 pub const MAX_POPOVER_LENGTH: f64 = 460.0;
 
-/// Logical size of the whole HUD window.
+/// Thickness of the invisible strip left against the screen edge when
+/// auto-hide has tucked the notch away. Moving the pointer onto it brings the
+/// notch back; thin enough that it never gets in the way of a scrollbar.
+pub const WAKE_THICKNESS: f64 = 4.0;
+
+/// How far outside a shape the pointer can stray and still count as on it.
 ///
-/// The window has to contain the strip and, while open, the popover beside it.
-/// `measured` is what the webview actually laid out and wins outright when
-/// present: only the webview knows whether a popover is really on screen and
-/// how tall it came out. Without that, hovering the strip between two rings
-/// would leave the window standing wide open around nothing.
-///
-/// The fallback is used until the first measurement arrives. Either way the
-/// result is clamped so a not-yet-measured 0 or a runaway list can't produce a
-/// silly window.
-pub fn hud_extent(
-    metrics: HudMetrics,
-    edge: Edge,
-    providers: usize,
-    open: bool,
-    measured: Option<(f64, f64)>,
-) -> (f64, f64) {
+/// Wide on purpose: the window only stops being click-through once the cursor
+/// is inside this margin, so a pointer moving towards a button has already
+/// made the window hittable by the time it gets there -- and a click is never
+/// swallowed by a window that was still transparent to it.
+pub const HIT_MARGIN: f64 = 14.0;
+
+/// Logical size of the strip holding `providers` rings, in window axes
+/// (width, height).
+pub fn strip_size(metrics: HudMetrics, edge: Edge, providers: usize) -> (f64, f64) {
     let (along, thickness) = metrics.strip_extent(providers);
-    let open_depth = thickness + metrics.popover_gap + metrics.popover_size;
-
-    // How deep the window is allowed to get once a card is open.
-    //
-    // The card is laid out `popover_size` wide on every edge. On a left/right
-    // edge that width is also its depth, so `open_depth` is exactly right and
-    // doubles as the ceiling. On a top/bottom edge the depth is the card's
-    // height, which its content decides and which has nothing to do with its
-    // width -- capping it at `open_depth` there cut tall cards off, so the
-    // ceiling becomes the tallest card we will render.
-    let max_depth = if edge.is_horizontal() {
-        thickness + metrics.popover_gap + MAX_POPOVER_LENGTH
-    } else {
-        open_depth
-    };
-
-    let (fallback_w, fallback_h) = if edge.is_horizontal() {
-        (along, if open { open_depth } else { thickness })
-    } else {
-        (if open { open_depth } else { thickness }, along)
-    };
-
-    let usable = |value: f64| value.is_finite() && value > 0.0;
-    let (w, h) = match measured {
-        Some((w, h)) if usable(w) && usable(h) => (w, h),
-        _ => (fallback_w, fallback_h),
-    };
-
-    let max_along = MAX_STRIP_LENGTH.max(MAX_POPOVER_LENGTH);
+    let along = along.min(MAX_STRIP_LENGTH);
     if edge.is_horizontal() {
-        (
-            w.clamp(metrics.slot, max_along),
-            h.clamp(thickness, max_depth),
-        )
+        (along, thickness)
     } else {
-        (
-            w.clamp(thickness, max_depth),
-            h.clamp(metrics.slot, max_along),
-        )
+        (thickness, along)
     }
 }
 
-/// Where the strip sits inside the window, as an offset from the window's
-/// origin, in logical pixels.
+/// Logical size of the HUD window whenever the notch is on screen.
 ///
-/// The strip always hugs the screen edge; the popover occupies the rest of the
-/// window on the inward side, so on a right or bottom edge the strip is pushed
-/// to the far end of the window.
-pub fn strip_offset(metrics: HudMetrics, edge: Edge, window: (f64, f64)) -> (f64, f64) {
-    let (w, h) = window;
-    match edge {
-        Edge::Right => (w - metrics.strip_thickness, 0.0),
-        Edge::Left => (0.0, 0.0),
-        Edge::Bottom => (0.0, h - metrics.strip_thickness),
-        Edge::Top => (0.0, 0.0),
+/// The window is the largest the notch can ever need -- the strip plus the
+/// tallest card beside it -- and it stays that size whether a card is open or
+/// not. Nothing about the window changes as the notch opens, closes, or moves
+/// between cards, so all of that can be animated freely: springs on the card's
+/// size, a close animation that plays out in full, a strip that slides into the
+/// edge. Outside the shapes the webview paints, the window is click-through
+/// (see [`hit_test`]), so the extra room costs the desktop nothing.
+pub fn panel_size(metrics: HudMetrics, edge: Edge, providers: usize) -> (f64, f64) {
+    let (along, thickness) = metrics.strip_extent(providers);
+    let along = along.min(MAX_STRIP_LENGTH);
+
+    // The card is `popover_size` wide on every edge. Beside a vertical strip
+    // that width is its depth and its content decides its length; beside a
+    // horizontal one it is the other way round.
+    let (card_along, card_depth) = if edge.is_horizontal() {
+        (metrics.popover_size, MAX_POPOVER_LENGTH)
+    } else {
+        (MAX_POPOVER_LENGTH, metrics.popover_size)
+    };
+
+    let along = along.max(card_along);
+    let depth = thickness + metrics.popover_gap + card_depth;
+    if edge.is_horizontal() {
+        (along, depth)
+    } else {
+        (depth, along)
     }
+}
+
+/// Logical size of the wake strip auto-hide leaves behind: as long as the
+/// strip it replaces, [`WAKE_THICKNESS`] deep.
+pub fn wake_size(metrics: HudMetrics, edge: Edge, providers: usize) -> (f64, f64) {
+    let (w, h) = strip_size(metrics, edge, providers);
+    if edge.is_horizontal() {
+        (w, WAKE_THICKNESS)
+    } else {
+        (WAKE_THICKNESS, h)
+    }
+}
+
+/// The HUD window, and where the strip sits inside it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Docked {
+    /// The window, in physical pixels.
+    pub window: Placement,
+    /// The strip's top-left corner inside the window, in logical pixels.
+    pub strip_x: f64,
+    pub strip_y: f64,
+}
+
+/// Dock the panel window so the strip lands exactly where [`place`] would put
+/// it on its own.
+///
+/// The strip is what the user positioned (edge, offset, margin), so it is
+/// placed first and the window is built around it: flush with the strip's outer
+/// side, reaching inward by the panel's depth, and centred on the strip along
+/// the edge -- then pulled back inside the work area. Placing the *window* by
+/// the offset instead would move the strip every time the panel's length
+/// changed, and would stop an offset of 0 meaning "flush with the top".
+pub fn dock_panel(
+    area: WorkArea,
+    edge: Edge,
+    offset: f32,
+    margin: f64,
+    strip: (f64, f64),
+    panel: (f64, f64),
+) -> Docked {
+    let s = place(area, edge, offset, margin, strip.0, strip.1);
+    let scale = area.scale;
+    let pw = (panel.0 * scale).round() as i32;
+    let ph = (panel.1 * scale).round() as i32;
+
+    let centred = |start: i32, size: i32, panel: i32| start + (size - panel) / 2;
+    let (x, y) = match edge {
+        Edge::Right => (
+            s.x + s.width - pw,
+            clamp_axis(centred(s.y, s.height, ph), ph, area.y, area.height),
+        ),
+        Edge::Left => (
+            s.x,
+            clamp_axis(centred(s.y, s.height, ph), ph, area.y, area.height),
+        ),
+        Edge::Top => (
+            clamp_axis(centred(s.x, s.width, pw), pw, area.x, area.width),
+            s.y,
+        ),
+        Edge::Bottom => (
+            clamp_axis(centred(s.x, s.width, pw), pw, area.x, area.width),
+            s.y + s.height - ph,
+        ),
+    };
+
+    Docked {
+        window: Placement {
+            x,
+            y,
+            width: pw,
+            height: ph,
+        },
+        strip_x: (s.x - x) as f64 / scale,
+        strip_y: (s.y - y) as f64 / scale,
+    }
+}
+
+/// Dock the wake strip: at the strip's position along the edge, but flush
+/// against the edge itself whatever the margin, because the edge is where a
+/// pointer thrown at the side of the screen actually stops.
+pub fn dock_wake(area: WorkArea, edge: Edge, offset: f32, wake: (f64, f64)) -> Placement {
+    place(area, edge, offset, 0.0, wake.0, wake.1)
+}
+
+/// A shape the webview has painted, in window-logical pixels.
+#[derive(Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct HitRect {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
+/// Whether a window-logical point is on any of the painted shapes, allowing
+/// `margin` of slack around each.
+pub fn hit_test(rects: &[HitRect], x: f64, y: f64, margin: f64) -> bool {
+    rects.iter().any(|r| {
+        r.w > 0.0
+            && r.h > 0.0
+            && x >= r.x - margin
+            && x <= r.x + r.w + margin
+            && y >= r.y - margin
+            && y <= r.y + r.h + margin
+    })
 }
 
 #[cfg(test)]
@@ -316,7 +399,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod extent_tests {
+mod panel_tests {
     use super::*;
     use crate::config::HudSize;
 
@@ -324,124 +407,196 @@ mod extent_tests {
         HudSize::Medium.metrics()
     }
 
-    #[test]
-    fn a_resting_strip_is_only_as_deep_as_its_thickness() {
-        let (w, h) = hud_extent(m(), Edge::Right, 3, false, None);
-        assert_eq!(w, m().strip_thickness);
-        assert_eq!(h, m().strip_extent(3).0);
+    fn screen() -> WorkArea {
+        WorkArea::new(0, 0, 1920, 1040, 1.0)
     }
 
     #[test]
-    fn opening_the_popover_grows_the_window_inward_only() {
-        let resting = hud_extent(m(), Edge::Right, 3, false, None);
-        let open = hud_extent(m(), Edge::Right, 3, true, None);
-        assert_eq!(
-            open.0,
-            m().strip_thickness + m().popover_gap + m().popover_size
-        );
-        assert_eq!(open.1, resting.1, "length along the edge is unchanged");
+    fn the_strip_lands_where_place_would_put_it_alone() {
+        // Whatever size the panel is, the strip is what the user positioned, so
+        // it must sit exactly where the strip-sized window used to.
+        for edge in [Edge::Top, Edge::Bottom, Edge::Left, Edge::Right] {
+            for offset in [0.0, 0.3, 0.5, 1.0] {
+                let strip = strip_size(m(), edge, 3);
+                let alone = place(screen(), edge, offset, 6.0, strip.0, strip.1);
+                let docked =
+                    dock_panel(screen(), edge, offset, 6.0, strip, panel_size(m(), edge, 3));
+                let x = docked.window.x + docked.strip_x.round() as i32;
+                let y = docked.window.y + docked.strip_y.round() as i32;
+                assert_eq!((x, y), (alone.x, alone.y), "{edge:?} at {offset}");
+            }
+        }
     }
 
     #[test]
-    fn a_horizontal_edge_swaps_the_axes() {
-        let vertical = hud_extent(m(), Edge::Right, 3, true, None);
-        let horizontal = hud_extent(m(), Edge::Top, 3, true, None);
-        assert_eq!((horizontal.1, horizontal.0), vertical);
+    fn the_panel_stays_inside_the_work_area() {
+        for edge in [Edge::Top, Edge::Bottom, Edge::Left, Edge::Right] {
+            for offset in [0.0, 1.0] {
+                let d = dock_panel(
+                    screen(),
+                    edge,
+                    offset,
+                    0.0,
+                    strip_size(m(), edge, 1),
+                    panel_size(m(), edge, 1),
+                );
+                let w = d.window;
+                assert!(w.x >= 0 && w.y >= 0, "{edge:?} {offset}: {w:?}");
+                assert!(
+                    w.x + w.width <= 1920 && w.y + w.height <= 1040,
+                    "{edge:?}: {w:?}"
+                );
+            }
+        }
     }
 
     #[test]
-    fn the_measured_size_wins_when_the_webview_reports_one() {
-        let open = m().strip_thickness + m().popover_gap + m().popover_size;
-        let (w, h) = hud_extent(m(), Edge::Right, 3, true, Some((open, 430.0)));
-        assert_eq!((w, h), (open, 430.0));
-    }
-
-    #[test]
-    fn hovering_the_strip_with_no_popover_keeps_the_window_narrow() {
-        // The cursor can sit on the strip between two rings: the backend thinks
-        // the notch is open, but the webview has nothing to show. Its measured
-        // depth is the strip alone, and that must win -- otherwise the window
-        // stands wide open around an empty space.
-        let (w, _) = hud_extent(
-            m(),
+    fn the_panel_is_flush_with_the_strips_outer_side() {
+        let strip = strip_size(m(), Edge::Right, 3);
+        let d = dock_panel(
+            screen(),
             Edge::Right,
-            3,
-            true,
-            Some((m().strip_thickness, 430.0)),
+            0.5,
+            0.0,
+            strip,
+            panel_size(m(), Edge::Right, 3),
         );
-        assert_eq!(w, m().strip_thickness);
+        assert_eq!(d.window.x + d.window.width, 1920);
+        assert_eq!(d.strip_x, d.window.width as f64 - strip.0);
+
+        let strip = strip_size(m(), Edge::Top, 3);
+        let d = dock_panel(
+            screen(),
+            Edge::Top,
+            0.5,
+            0.0,
+            strip,
+            panel_size(m(), Edge::Top, 3),
+        );
+        assert_eq!(d.window.y, 0);
+        assert_eq!(d.strip_y, 0.0);
     }
 
-    /// On a top/bottom edge the card's depth is its *height*, set by its
-    /// content, while `popover_size` is its width. The window has to follow the
-    /// measurement both ways: a short card must not leave a slab of dead
-    /// window above it, and a tall one must not be cut off.
     #[test]
-    fn a_horizontal_edge_follows_the_cards_real_height() {
+    fn the_panel_holds_the_tallest_card_beside_the_strip() {
         let m = m();
-        let strip = m.strip_extent(3).0;
-
-        // A short card -- one line of detail, no windows, no sessions.
-        let short = m.strip_thickness + m.popover_gap + 85.0;
-        let (_, h) = hud_extent(m, Edge::Bottom, 3, true, Some((strip, short)));
-        assert_eq!(h, short, "the window should shrink to a short card");
-        assert!(
-            h < m.strip_thickness + m.popover_gap + m.popover_size,
-            "a short card should not hold the window open to the card's width"
-        );
-
-        // A tall card -- two usage windows and a session list.
-        let tall = m.strip_thickness + m.popover_gap + 251.0;
-        assert!(tall > m.strip_thickness + m.popover_gap + m.popover_size);
-        let (_, h) = hud_extent(m, Edge::Bottom, 3, true, Some((strip, tall)));
-        assert_eq!(h, tall, "a tall card must not be clipped by the window");
-    }
-
-    /// The same card on a left/right edge is a different story: there the
-    /// depth axis is the card's width, which really is `popover_size`, so the
-    /// ceiling stays tight.
-    #[test]
-    fn a_vertical_edge_still_caps_depth_at_the_card_width() {
-        let m = m();
-        let open = m.strip_thickness + m.popover_gap + m.popover_size;
-        let (w, _) = hud_extent(m, Edge::Right, 3, true, Some((9000.0, 400.0)));
-        assert_eq!(w, open);
-    }
-
-    #[test]
-    fn an_unmeasured_or_absurd_size_is_clamped() {
-        let natural = m().strip_extent(3).0;
-        assert_eq!(hud_extent(m(), Edge::Right, 3, true, None).1, natural);
-        // A webview that has not laid out yet reports zero.
+        // Vertical edge: depth is the card's width, length its tallest height.
+        let (w, h) = panel_size(m, Edge::Right, 1);
+        assert_eq!(w, m.strip_thickness + m.popover_gap + m.popover_size);
+        assert_eq!(h, MAX_POPOVER_LENGTH);
+        // Horizontal edge: the axes swap, and depth is the tallest card.
+        let (w, h) = panel_size(m, Edge::Bottom, 1);
+        assert_eq!(w, m.popover_size.max(m.strip_extent(1).0));
+        assert_eq!(h, m.strip_thickness + m.popover_gap + MAX_POPOVER_LENGTH);
+        // A long strip is never cut short by the card.
+        let (_, h) = panel_size(m, Edge::Right, 7);
         assert_eq!(
-            hud_extent(m(), Edge::Right, 3, true, Some((0.0, 0.0))).1,
-            natural
+            h,
+            m.strip_extent(7)
+                .0
+                .clamp(MAX_POPOVER_LENGTH, MAX_STRIP_LENGTH)
         );
-        assert_eq!(
-            hud_extent(m(), Edge::Right, 3, true, Some((10.0, f64::NAN))).1,
-            natural
-        );
-        // A runaway list cannot cover the screen, and neither can a bogus depth.
-        let (w, h) = hud_extent(m(), Edge::Right, 3, true, Some((9000.0, 9000.0)));
-        assert!(h <= MAX_STRIP_LENGTH.max(MAX_POPOVER_LENGTH));
-        assert!(w <= m().strip_thickness + m().popover_gap + m().popover_size);
     }
 
     #[test]
-    fn the_strip_hugs_its_edge_within_the_window() {
-        let window = hud_extent(m(), Edge::Right, 3, true, None);
-        // Docked right: the strip is pushed to the window's right end, leaving
-        // the popover the inward side.
-        let (x, y) = strip_offset(m(), Edge::Right, window);
-        assert_eq!(x, window.0 - m().strip_thickness);
-        assert_eq!(y, 0.0);
+    fn the_panel_does_not_depend_on_whether_a_card_is_open() {
+        // The whole point: one size, so opening never costs a SetWindowPos.
+        assert_eq!(
+            panel_size(m(), Edge::Left, 4),
+            panel_size(m(), Edge::Left, 4)
+        );
+        let a = dock_panel(
+            screen(),
+            Edge::Left,
+            0.5,
+            0.0,
+            strip_size(m(), Edge::Left, 4),
+            panel_size(m(), Edge::Left, 4),
+        );
+        let b = dock_panel(
+            screen(),
+            Edge::Left,
+            0.5,
+            0.0,
+            strip_size(m(), Edge::Left, 4),
+            panel_size(m(), Edge::Left, 4),
+        );
+        assert_eq!(a, b);
+    }
 
-        // Docked left: the strip is already at the origin.
-        assert_eq!(strip_offset(m(), Edge::Left, window), (0.0, 0.0));
+    #[test]
+    fn the_wake_strip_hugs_the_edge_along_the_strip() {
+        let strip = strip_size(m(), Edge::Right, 3);
+        let wake = wake_size(m(), Edge::Right, 3);
+        assert_eq!(wake, (WAKE_THICKNESS, strip.1));
 
-        let window = hud_extent(m(), Edge::Bottom, 3, true, None);
-        let (x, y) = strip_offset(m(), Edge::Bottom, window);
-        assert_eq!(x, 0.0);
-        assert_eq!(y, window.1 - m().strip_thickness);
+        // Even with a margin the wake strip is on the edge itself.
+        let p = dock_wake(screen(), Edge::Right, 0.5, wake);
+        assert_eq!(p.x + p.width, 1920);
+        let alone = place(screen(), Edge::Right, 0.5, 30.0, strip.0, strip.1);
+        assert_eq!(p.y, alone.y, "same position along the edge as the strip");
+
+        let wake = wake_size(m(), Edge::Bottom, 3);
+        let p = dock_wake(screen(), Edge::Bottom, 0.5, wake);
+        assert_eq!(p.y + p.height, 1040);
+        assert_eq!(p.height, WAKE_THICKNESS as i32);
+    }
+
+    #[test]
+    fn a_runaway_strip_is_clamped() {
+        let (_, along) = strip_size(m(), Edge::Right, 500);
+        assert_eq!(along, MAX_STRIP_LENGTH);
+    }
+
+    #[test]
+    fn dpi_scaling_applies_to_the_panel_and_the_strip_offset_is_logical() {
+        let area = WorkArea::new(0, 0, 2880, 1560, 1.5);
+        let strip = strip_size(m(), Edge::Right, 3);
+        let panel = panel_size(m(), Edge::Right, 3);
+        let d = dock_panel(area, Edge::Right, 0.5, 0.0, strip, panel);
+        assert_eq!(d.window.width, (panel.0 * 1.5).round() as i32);
+        assert!((d.strip_x - (panel.0 - strip.0)).abs() < 1.0);
+    }
+
+    /// The browser preview (`npm run dev`) works the panel geometry out for
+    /// itself in `src/lib/layout.ts`. Its limits have to be these ones, or the
+    /// preview stops showing what the app does.
+    #[test]
+    fn the_frontend_preview_uses_the_same_limits() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../src/lib/layout.ts")
+            .canonicalize();
+        // Vendored builds won't have the frontend beside them; nothing to check.
+        let Ok(path) = path else { return };
+        let Ok(source) = std::fs::read_to_string(&path) else {
+            return;
+        };
+        let constant = |name: &str| -> f64 {
+            source
+                .split_once(&format!("export const {name} = "))
+                .and_then(|(_, rest)| rest.split(';').next())
+                .and_then(|v| v.trim().parse::<f64>().ok())
+                .unwrap_or_else(|| panic!("{name} missing from layout.ts"))
+        };
+        assert_eq!(constant("MAX_STRIP_LENGTH"), MAX_STRIP_LENGTH);
+        assert_eq!(constant("MAX_POPOVER_LENGTH"), MAX_POPOVER_LENGTH);
+        assert_eq!(constant("WAKE_THICKNESS"), WAKE_THICKNESS);
+        assert_eq!(constant("HIT_MARGIN"), HIT_MARGIN);
+    }
+
+    #[test]
+    fn hit_testing_allows_a_margin_and_ignores_empty_rects() {
+        let rects = [HitRect {
+            x: 100.0,
+            y: 50.0,
+            w: 40.0,
+            h: 200.0,
+        }];
+        assert!(hit_test(&rects, 120.0, 60.0, 0.0));
+        assert!(!hit_test(&rects, 90.0, 60.0, 0.0));
+        assert!(hit_test(&rects, 90.0, 60.0, HIT_MARGIN));
+        assert!(!hit_test(&rects, 80.0, 60.0, HIT_MARGIN));
+        assert!(!hit_test(&[HitRect::default()], 0.0, 0.0, HIT_MARGIN));
+        assert!(!hit_test(&[], 0.0, 0.0, HIT_MARGIN));
     }
 }

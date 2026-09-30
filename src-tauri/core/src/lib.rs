@@ -7,8 +7,11 @@
 pub mod adapters;
 pub mod collector;
 pub mod config;
+pub mod hook_settings;
 pub mod layout;
+pub mod live;
 pub mod model;
+pub mod presence;
 pub mod secrets;
 pub mod sqlite;
 

@@ -10,13 +10,13 @@
 //!    `WS_EX_APPWINDOW`) keeps the notch out of Alt+Tab and off the taskbar.
 //! 3. **Stay on top.** `HWND_TOPMOST`, reasserted periodically because other
 //!    topmost windows (and full-screen apps) can displace us.
-//! 4. **Click-through when resting.** `WS_EX_TRANSPARENT` is toggled so the
-//!    collapsed pill doesn't swallow clicks meant for whatever is underneath.
+//! 4. **Click-through except over the notch.** The window is larger than the
+//!    shapes it paints, so `WS_EX_TRANSPARENT` is toggled from the cursor poll
+//!    and only cleared while the pointer is over the strip or an open card.
 
 use anyhow::{anyhow, Result};
 
-use codenotch_core::config::Edge;
-use codenotch_core::layout::{place, Placement, WorkArea};
+use codenotch_core::layout::{Placement, WorkArea};
 
 use windows::core::{BOOL, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, POINT, RECT, TRUE, WPARAM};
@@ -313,23 +313,12 @@ pub fn window_scale(handle: WindowHandle) -> f64 {
     }
 }
 
-/// Compute where the HUD belongs and move it there, in one call.
-pub fn dock(
-    handle: WindowHandle,
-    monitor: Option<usize>,
-    edge: Edge,
-    offset: f32,
-    margin: f64,
-    logical_width: f64,
-    logical_height: f64,
-) -> Result<Placement> {
+/// The work area the HUD docks into, carrying this window's DPI scale.
+pub fn work_area(handle: WindowHandle, monitor: Option<usize>) -> Result<WorkArea> {
     let mut area =
         work_area_for(monitor).ok_or_else(|| anyhow!("no monitors reported a work area"))?;
     area.scale = window_scale(handle);
-
-    let placement = place(area, edge, offset, margin, logical_width, logical_height);
-    move_no_activate(handle, placement)?;
-    Ok(placement)
+    Ok(area)
 }
 
 /// Where the mouse is, in physical screen pixels.
@@ -343,6 +332,52 @@ pub fn cursor_pos() -> Option<(i32, i32)> {
     // SAFETY: `point` is a plain out-parameter owned by this frame.
     unsafe { GetCursorPos(&mut point).ok()? };
     Some((point.x, point.y))
+}
+
+/// The SID of the account this process runs as, as `S-1-5-21-…`.
+///
+/// Names the hook relay's pipe, so two accounts on one machine can never meet
+/// on it. Must match `codenotch-hook`'s own lookup exactly.
+pub fn current_user_sid() -> Option<String> {
+    use windows::core::PWSTR;
+    use windows::Win32::Foundation::{CloseHandle, LocalFree, HANDLE, HLOCAL};
+    use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
+    use windows::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    // SAFETY: every out-pointer is owned by this frame, the token is closed on
+    // every path, and the buffer is sized by the first call.
+    unsafe {
+        let mut token = HANDLE::default();
+        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).ok()?;
+
+        let mut needed = 0u32;
+        let _ = GetTokenInformation(token, TokenUser, None, 0, &mut needed);
+        if needed == 0 {
+            let _ = CloseHandle(token);
+            return None;
+        }
+        let mut buf = vec![0u8; needed as usize];
+        let ok = GetTokenInformation(
+            token,
+            TokenUser,
+            Some(buf.as_mut_ptr().cast()),
+            needed,
+            &mut needed,
+        )
+        .is_ok();
+        let _ = CloseHandle(token);
+        if !ok {
+            return None;
+        }
+
+        let user = &*(buf.as_ptr() as *const TOKEN_USER);
+        let mut text = PWSTR::null();
+        ConvertSidToStringSidW(user.User.Sid, &mut text).ok()?;
+        let sid = text.to_string().ok();
+        let _ = LocalFree(Some(HLOCAL(text.0 as *mut _)));
+        sid
+    }
 }
 
 /// Basename of a process's executable, e.g. `Cursor.exe`.

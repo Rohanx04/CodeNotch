@@ -5,12 +5,17 @@ use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{Emitter, Manager, State};
+
 use tokio::sync::Mutex as AsyncMutex;
 
 use codenotch_core::config::{Config, Edge, HudMetrics};
+use codenotch_core::hook_settings::{HookPreview, HookStatus};
+use codenotch_core::layout::HitRect;
+use codenotch_core::live::LiveState;
 use codenotch_core::model::{ProviderId, Telemetry};
 use codenotch_core::Collector;
 
+use crate::approvals::{ApprovalRequest, Approvals, Reply};
 use crate::hud::{Hud, HudState};
 use crate::platform;
 
@@ -23,9 +28,16 @@ pub const CONFIG_EVENT: &str = "codenotch://config";
 pub struct AppState {
     pub hud: Arc<Hud>,
     pub collector: Arc<AsyncMutex<Collector>>,
-    /// Latest telemetry, so a reloading webview gets data without waiting for
-    /// the next poll.
+    /// Latest published telemetry (live hook sessions laid over the
+    /// collection), so a reloading webview gets data without waiting.
     pub latest: Arc<Mutex<Telemetry>>,
+    /// The collector's last result, before the live overlay: what a hook
+    /// event is laid over when it republishes between polls.
+    pub raw: Arc<Mutex<Telemetry>>,
+    /// Claude Code sessions as the hooks report them.
+    pub live: Arc<Mutex<LiveState>>,
+    /// The permission request on the notch, if any.
+    pub approvals: Arc<Approvals>,
 }
 
 /// The payload a freshly loaded webview needs to render immediately.
@@ -42,6 +54,8 @@ pub struct Bootstrap {
     pub version: String,
     /// False on non-Windows dev builds, where the Win32 layer is a no-op.
     pub native_window: bool,
+    /// A permission request already waiting when the webview (re)loaded.
+    pub approval: Option<ApprovalRequest>,
 }
 
 /// Called once the webview has mounted.
@@ -57,26 +71,34 @@ pub fn hud_ready(state: State<'_, AppState>) -> Result<Bootstrap, String> {
         edge: state.hud.edge(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         native_window: cfg!(windows),
+        approval: state.approvals.current(),
     })
 }
 
-/// Pointer entered or left the notch.
+/// Pointer entered or left the notch. Only acted on where there is no native
+/// cursor to poll (non-Windows dev builds).
 #[tauri::command]
 pub fn hud_hover(hovering: bool, state: State<'_, AppState>) -> Result<(), String> {
     state.hud.set_hover(hovering).map_err(|e| e.to_string())
 }
 
-/// The webview measured its laid-out content.
+/// The shapes the webview has painted, which the cursor poll hit-tests to
+/// decide where the window takes the mouse.
 #[tauri::command]
-pub fn hud_set_content_size(
-    width: f64,
-    height: f64,
-    state: State<'_, AppState>,
-) -> Result<(), String> {
-    state
-        .hud
-        .set_content_size(width, height)
-        .map_err(|e| e.to_string())
+pub fn hud_set_hit_rects(rects: Vec<HitRect>, state: State<'_, AppState>) {
+    state.hud.set_hit_rects(rects);
+}
+
+/// The pointer found auto-hide's wake strip.
+#[tauri::command]
+pub fn hud_wake(state: State<'_, AppState>) -> Result<(), String> {
+    state.hud.wake().map_err(|e| e.to_string())
+}
+
+/// Close the open card (Escape, when the webview has the keyboard).
+#[tauri::command]
+pub fn hud_dismiss(state: State<'_, AppState>) -> Result<(), String> {
+    state.hud.dismiss().map_err(|e| e.to_string())
 }
 
 /// Toggle "stay expanded".
@@ -98,6 +120,9 @@ pub async fn set_config(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Config, String> {
+    // The webview is not trusted to send sane values.
+    let config = config.sanitised();
+
     // Save first: if this fails the user should hear about it rather than see
     // a setting silently revert on the next launch.
     config.save().map_err(|e| e.to_string())?;
@@ -122,16 +147,8 @@ pub async fn refresh_now(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Telemetry, String> {
-    let mut collector = state.collector.lock().await;
-    collector.invalidate();
-    let (telemetry, _alerts) = collector.poll(chrono::Utc::now()).await;
-    drop(collector);
-
-    if let Ok(mut latest) = state.latest.lock() {
-        *latest = telemetry.clone();
-    }
-    let _ = app.emit(TELEMETRY_EVENT, &telemetry);
-    Ok(telemetry)
+    crate::poll::refresh(&app).await;
+    Ok(state.latest.lock().map_err(|e| e.to_string())?.clone())
 }
 
 /// Bring a provider's window to the front.
@@ -144,8 +161,8 @@ pub fn focus_provider(
     title_hint: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<bool, String> {
-    // Collapse first: the card is about to be behind whatever we raise.
-    let _ = state.hud.set_hover(false);
+    // Close the card first: it is about to be behind whatever we raise.
+    let _ = state.hud.dismiss();
 
     platform::focus_provider_window(provider.focus_processes(), title_hint.as_deref())
         .map_err(|e| e.to_string())
@@ -163,7 +180,7 @@ pub fn peek(seconds: Option<u64>, state: State<'_, AppState>) -> Result<(), Stri
     let secs = seconds.unwrap_or(5).clamp(1, 60);
     state
         .hud
-        .peek(Duration::from_secs(secs))
+        .peek(Duration::from_secs(secs), None)
         .map_err(|e| e.to_string())
 }
 
@@ -214,6 +231,42 @@ pub fn open_config_dir(app: tauri::AppHandle) -> Result<(), String> {
     app.opener()
         .open_path(dir.to_string_lossy(), None::<&str>)
         .map_err(|e| e.to_string())
+}
+
+/// Whether CodeNotch's Claude Code hooks are installed.
+#[tauri::command]
+pub fn hooks_status() -> HookStatus {
+    crate::hooks::installer().status()
+}
+
+/// What installing (or removing) the hooks would change in
+/// `~/.claude/settings.json`. Writes nothing.
+#[tauri::command]
+pub fn hooks_preview(install: bool) -> Result<HookPreview, String> {
+    crate::hooks::installer().preview(install, chrono::Local::now())
+}
+
+/// Apply a previewed change. Only ever called from an explicit click on the
+/// diff the user was shown; `fingerprint` ties the write to that diff.
+#[tauri::command]
+pub fn hooks_apply(install: bool, fingerprint: String) -> Result<String, String> {
+    crate::hooks::installer().write(install, &fingerprint, chrono::Local::now())
+}
+
+/// The approval card is on screen and a human can act on it.
+#[tauri::command]
+pub fn approval_ack(id: String, state: State<'_, AppState>) {
+    state.approvals.reply(&id, Reply::Ack);
+}
+
+/// Allow or Deny, from an explicit click on the approval card.
+#[tauri::command]
+pub fn approval_decide(id: String, decision: String, state: State<'_, AppState>) {
+    let word = match decision.as_str() {
+        "allow" => "allow",
+        _ => "deny",
+    };
+    state.approvals.reply(&id, Reply::Decision(word));
 }
 
 /// Convenience for the tray and the poll loop.

@@ -19,8 +19,6 @@
 
         "width": 260,
         "height": 40,
-        "minWidth": 120,
-        "minHeight": 28,
 
         "decorations": false,
         "transparent": true,
@@ -36,7 +34,8 @@
         "visible": false,
 
         "acceptFirstMouse": true,
-        "dragDropEnabled": false
+        "dragDropEnabled": false,
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required"
       }
     ],
     "security": {

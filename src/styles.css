@@ -91,6 +91,60 @@ body {
   font-feature-settings: "tnum";
 }
 
+/* --- The panel ---------------------------------------------------------- */
+
+/*
+ * The whole window. It never changes size while the notch is on screen; the
+ * strip and the card move inside it (see App.tsx), and Rust keeps everything
+ * outside the painted shapes click-through.
+ */
+.hud-panel {
+  position: absolute;
+}
+
+/* Positioned by Rust's numbers; slid into the edge by the animation loop. */
+.strip-wrap {
+  position: absolute;
+  will-change: transform;
+}
+
+/* Auto-hide's wake strip: the only thing left on screen. A sliver of the
+   notch's black on the very edge says where it went. */
+.wake-strip {
+  position: fixed;
+  inset: 0;
+}
+.wake-strip::after {
+  content: "";
+  position: absolute;
+  background: var(--notch-black);
+  border-radius: 2px;
+}
+.wake-strip[data-edge="right"]::after {
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+}
+.wake-strip[data-edge="left"]::after {
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+}
+.wake-strip[data-edge="top"]::after {
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+}
+.wake-strip[data-edge="bottom"]::after {
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+}
+
 /* --- The strip ---------------------------------------------------------- */
 
 /*
@@ -121,6 +175,12 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* Paused: the numbers stay, dimmed, so it is obvious nothing is updating. */
+.notch-strip[data-paused] .ring-cell {
+  opacity: 0.45;
+  transition: opacity var(--dur-card) ease;
 }
 
 /* The settings gear at the tail of the strip: present but never competing with
@@ -177,6 +237,9 @@ body {
 .ring-slot[data-active] {
   transform: scale(1.09);
 }
+.ring-slot:hover {
+  filter: brightness(1.06);
+}
 /* Pressing pulls it back in, so a click has some give. */
 .ring-slot:active {
   transform: scale(1.02);
@@ -207,6 +270,130 @@ body {
   color: var(--ink);
 }
 
+/* Registered so the glow's colour can transition like any other colour. */
+@property --glow {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: transparent;
+}
+
+/*
+ * A soft glow behind the ring in the colour of what the provider is doing:
+ * nothing when idle, strongest when it needs the user.
+ */
+.ring-glow {
+  position: absolute;
+  inset: -55%;
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0;
+  filter: blur(6px);
+  background: radial-gradient(circle, var(--glow, transparent) 0%, transparent 62%);
+  transition:
+    opacity 400ms ease-in-out,
+    --glow 400ms ease-in-out;
+}
+.ring-glow[data-state="busy"] {
+  --glow: var(--tone-busy);
+  opacity: 0.35;
+}
+.ring-glow[data-state="attention"] {
+  --glow: var(--tone-mid);
+  opacity: 0.65;
+  animation: notch-pulse 1.6s ease-in-out infinite;
+}
+.ring-glow[data-state="done"] {
+  --glow: var(--tone-low);
+  opacity: 0.5;
+}
+.ring-glow[data-state="error"] {
+  --glow: var(--tone-bad);
+  opacity: 0.6;
+}
+
+/*
+ * The corner badge. It pops in with a little overshoot, and shrinks away first
+ * when it is replaced by another.
+ */
+.ring-badge {
+  position: absolute;
+  top: -12%;
+  right: -12%;
+  width: 42%;
+  height: 42%;
+  min-width: 9px;
+  min-height: 9px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 7.5px;
+  font-weight: 800;
+  line-height: 1;
+  color: #000;
+  box-shadow: 0 0 0 1.5px var(--notch-black);
+  animation: badge-pop 280ms cubic-bezier(0.34, 1.7, 0.64, 1) both;
+}
+.ring-badge svg {
+  width: 72%;
+  height: 72%;
+  stroke-width: 3.5;
+}
+.ring-badge[data-kind="attention"] {
+  background: var(--tone-mid);
+}
+.ring-badge[data-kind="done"] {
+  background: var(--tone-low);
+}
+.ring-badge[data-kind="error"] {
+  background: var(--tone-bad);
+  color: #fff;
+}
+.ring-badge[data-leaving] {
+  animation: badge-out 90ms ease-in both;
+}
+@keyframes badge-pop {
+  from {
+    transform: scale(0);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+@keyframes badge-out {
+  to {
+    transform: scale(0);
+  }
+}
+
+/* A few sparks thrown off the ring when an agent finishes. */
+.ring-sparks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.ring-sparks i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 3px;
+  height: 3px;
+  margin: -1.5px;
+  border-radius: 50%;
+  background: var(--tone-low);
+  opacity: 0;
+  animation: spark-fly 650ms cubic-bezier(0.22, 1, 0.36, 1) 500ms both;
+}
+@keyframes spark-fly {
+  0% {
+    opacity: 1;
+    transform: rotate(var(--spark-angle)) translateX(40%) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: rotate(var(--spark-angle)) translateX(260%) scale(0.4);
+  }
+}
+
 .ring-pct {
   font-weight: 600;
   line-height: 1;
@@ -221,14 +408,84 @@ body {
  * which is exactly what the measurement needs in order to centre the card on
  * its ring.
  */
-.popover {
+.popover,
+.approval {
   position: relative;
   width: 100%;
   padding: 11px 13px 12px;
+  box-sizing: border-box;
+}
+
+/*
+ * The card itself. Its height is set every frame by the animation loop, so
+ * content changes spring to their new size; the content inside is laid out at
+ * its natural height and measured, never squeezed.
+ */
+.notch-card {
+  position: absolute;
+  will-change: transform, opacity;
+  visibility: hidden;
+}
+.card-shell {
+  position: relative;
   border-radius: 14px;
   background: var(--popover-bg);
   box-shadow: 0 18px 48px rgb(0 0 0 / 0.55);
-  box-sizing: border-box;
+  overflow: hidden;
+}
+.card-layer {
+  position: relative;
+}
+
+/*
+ * Changing what the card shows crossfades: the old view steps aside quickly,
+ * the new one arrives a beat later with a slight overshoot. Provider to
+ * provider is a glide along the strip, so its fade is shorter.
+ */
+.card-leave {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+  animation: card-leave 160ms ease-in both;
+}
+.card-leave.quick {
+  animation-duration: 90ms;
+}
+.card-enter-view {
+  animation: card-enter 300ms cubic-bezier(0.3, 1.2, 0.4, 1) 160ms both;
+}
+.card-enter-quick {
+  animation: card-enter 140ms ease-out 40ms both;
+}
+@keyframes card-leave {
+  to {
+    opacity: 0;
+  }
+}
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* The peek countdown: shrinks to nothing as the peek runs out. */
+.card-countdown {
+  position: absolute;
+  bottom: 3px;
+  left: 50%;
+  width: 60%;
+  height: 2px;
+  border-radius: 2px;
+  background: rgb(255 255 255 / 0.35);
+  transform: translateX(-50%) scaleX(0);
+  pointer-events: none;
 }
 
 /*
@@ -240,22 +497,22 @@ body {
   position: absolute;
   overflow: visible;
 }
-.popover[data-edge="right"] .popover-tail {
+.notch-card[data-edge="right"] .popover-tail {
   left: 100%;
   top: var(--tail-offset);
   margin-top: calc(var(--tail-half) * -1);
 }
-.popover[data-edge="left"] .popover-tail {
+.notch-card[data-edge="left"] .popover-tail {
   right: 100%;
   top: var(--tail-offset);
   margin-top: calc(var(--tail-half) * -1);
 }
-.popover[data-edge="top"] .popover-tail {
+.notch-card[data-edge="top"] .popover-tail {
   bottom: 100%;
   left: var(--tail-offset);
   margin-left: calc(var(--tail-half) * -1);
 }
-.popover[data-edge="bottom"] .popover-tail {
+.notch-card[data-edge="bottom"] .popover-tail {
   top: 100%;
   left: var(--tail-offset);
   margin-left: calc(var(--tail-half) * -1);
@@ -433,6 +690,15 @@ body {
   background: var(--tone-low);
 }
 
+/* The same project reads in the same colour in every list. */
+.session-project {
+  width: 3px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
 .session-title {
   flex: 1;
   min-width: 0;
@@ -445,6 +711,10 @@ body {
 
 .session-meta {
   flex-shrink: 0;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 9.5px;
   color: var(--ink-faint);
 }
@@ -475,51 +745,10 @@ body {
 }
 
 /*
- * The card appearing: it swells out of the strip and settles.
- *
- * `--enter-x` / `--enter-y` are set per edge in App.tsx, so it always emerges
- * from the strip rather than always sliding in from the right. `translate3d`
- * keeps it on the compositor.
- */
-@keyframes notch-reveal {
-  from {
-    opacity: 0;
-    transform: translate3d(var(--enter-x, 7px), var(--enter-y, 0px), 0) scale(0.97);
-  }
-  to {
-    opacity: 1;
-    transform: translate3d(0, 0, 0) scale(1);
-  }
-}
-.card-enter {
-  animation: notch-reveal var(--dur-card) var(--ease-liquid) both;
-  will-change: transform, opacity;
-}
-
-/*
- * The card moving between rings.
- *
- * Already on screen, so no entrance -- it slides along the edge to the new
- * ring. Position only: an absolutely-positioned card has no siblings to
- * reflow, and its box never changes, so the window is never resized mid-flight.
- */
-.notch-card {
-  transition:
-    top var(--dur-glide) var(--ease-liquid),
-    left var(--dur-glide) var(--ease-liquid);
-}
-
-/* The tail slides along the card's edge to keep pointing at the live ring. */
-.notch-card .popover-tail {
-  transition:
-    top var(--dur-glide) var(--ease-liquid),
-    left var(--dur-glide) var(--ease-liquid);
-}
-
-/*
- * The card's contents arriving, a beat behind the card itself and staggered
- * down the list, so it reads as filling up rather than being stamped on.
- * Transform and opacity only, so the measured height is final from frame one.
+ * The card's contents arriving on first open, a beat behind the card itself
+ * and staggered down the list, so it reads as filling up rather than being
+ * stamped on. Transform and opacity only, so the measured height is final from
+ * frame one.
  */
 @keyframes notch-rise {
   from {
@@ -531,27 +760,291 @@ body {
     transform: translate3d(0, 0, 0);
   }
 }
-.card-enter .popover-head,
-.card-enter .popover-account,
-.card-enter .usage-block,
-.card-enter .popover-empty,
-.card-enter .session-row {
+.card-rise .popover-head,
+.card-rise .popover-account,
+.card-rise .usage-block,
+.card-rise .popover-empty,
+.card-rise .popover-live,
+.card-rise .session-row {
   animation: notch-rise 240ms var(--ease-liquid) both;
 }
-.card-enter .popover-account {
+.card-rise .popover-account {
   animation-delay: 20ms;
 }
-.card-enter .usage-block:nth-child(1) {
+.card-rise .usage-block:nth-child(1) {
   animation-delay: 40ms;
 }
-.card-enter .usage-block:nth-child(2) {
+.card-rise .usage-block:nth-child(2) {
   animation-delay: 70ms;
 }
-.card-enter .usage-block:nth-child(n + 3) {
+.card-rise .usage-block:nth-child(n + 3) {
   animation-delay: 100ms;
 }
-.card-enter .session-row {
+.card-rise .popover-live {
+  animation-delay: 110ms;
+}
+.card-rise .session-row {
   animation-delay: 120ms;
+}
+
+/*
+ * A light sweep across the text of whatever is in progress -- the "working"
+ * label, the step a session is on.
+ */
+.shimmer {
+  background: linear-gradient(90deg, var(--ink-faint) 0%, var(--ink) 40%, var(--ink-faint) 70%);
+  background-size: 260% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 2.2s linear infinite;
+}
+.popover-activity.shimmer {
+  background-image: linear-gradient(
+    90deg,
+    var(--tone-busy) 0%,
+    #e6fbff 40%,
+    var(--tone-busy) 70%
+  );
+}
+@keyframes shimmer {
+  from {
+    background-position: 130% 0;
+  }
+  to {
+    background-position: -130% 0;
+  }
+}
+
+/* --- Live steps (Claude Code hooks) ------------------------------------- */
+
+.popover-live {
+  margin-top: 12px;
+  padding-top: 9px;
+  border-top: 1px solid var(--notch-line);
+}
+.popover-live-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ink-faint);
+}
+.popover-live-label i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+
+/* Three rows in a two-row window: completed, current, and the next one below. */
+.ticker {
+  position: relative;
+  height: 34px;
+  margin-top: 5px;
+  overflow: hidden;
+}
+/* Inset by the distance the completed row drifts left, so it never clips. */
+.ticker-row {
+  position: absolute;
+  left: 6px;
+  right: 0;
+  top: 0;
+  height: 17px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  transform-origin: left center;
+  will-change: transform, opacity;
+  --phase: 0;
+}
+.ticker-icon {
+  position: relative;
+  width: 9px;
+  height: 9px;
+  flex-shrink: 0;
+}
+.ticker-icon svg {
+  position: absolute;
+  inset: 0;
+  width: 9px;
+  height: 9px;
+  stroke-width: 2.6;
+}
+.ticker-chevron {
+  color: var(--tone-busy);
+  opacity: calc(1 - var(--phase) * 2);
+}
+.ticker-check {
+  color: var(--ink-faint);
+  opacity: calc(var(--phase) * 2 - 1);
+}
+.ticker-text {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 17px;
+}
+.ticker-text > span {
+  position: absolute;
+  inset: 0;
+  line-height: 17px;
+  font-size: 10.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ticker-now {
+  opacity: calc(1 - var(--phase) * 1.6);
+}
+.ticker-done {
+  color: var(--ink-faint);
+  opacity: calc(var(--phase) * 2 - 0.4);
+}
+
+/* --- Permission requests ------------------------------------------------ */
+
+.approval-mark {
+  color: var(--tone-mid);
+}
+.approval-target {
+  margin: 9px 0 0;
+  max-height: 84px;
+  overflow: auto;
+  padding: 7px 8px;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 0.06);
+  border: 1px solid rgb(255 255 255 / 0.08);
+  font-family: "Cascadia Mono", Consolas, ui-monospace, monospace;
+  font-size: 10px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--ink);
+  user-select: text;
+}
+.approval-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 6px;
+}
+.approval-btn {
+  flex: 1;
+  height: 26px;
+  border: 0;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    transform 80ms ease-out,
+    background-color var(--dur-quick) ease,
+    filter var(--dur-quick) ease;
+}
+.approval-btn:active {
+  transform: scale(0.96);
+}
+.approval-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.approval-deny {
+  background: rgb(255 255 255 / 0.1);
+  color: var(--ink);
+}
+.approval-deny:hover:not(:disabled) {
+  background: rgb(255 255 255 / 0.16);
+}
+.approval-allow {
+  background: var(--tone-low);
+  color: #04130b;
+}
+.approval-allow:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.approval-expiry {
+  margin: 7px 0 0;
+  font-size: 9.5px;
+  color: var(--ink-faint);
+  text-align: center;
+}
+
+/* --- Hook install (settings) -------------------------------------------- */
+
+.hooks {
+  padding-bottom: 4px;
+}
+.hooks-note {
+  margin: 2px 0 6px;
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--ink-faint);
+  overflow-wrap: anywhere;
+}
+.hooks-note code {
+  color: var(--ink-dim);
+  font-family: "Cascadia Mono", Consolas, ui-monospace, monospace;
+  font-size: 9.5px;
+}
+.hooks-ok {
+  color: var(--tone-low);
+}
+.hooks-bad {
+  color: var(--tone-bad);
+}
+.hooks-diff {
+  margin: 0 0 6px;
+  max-height: 150px;
+  overflow: auto;
+  padding: 6px 7px;
+  border-radius: 6px;
+  background: rgb(255 255 255 / 0.05);
+  font-family: "Cascadia Mono", Consolas, ui-monospace, monospace;
+  font-size: 9px;
+  line-height: 1.4;
+  white-space: pre;
+  color: var(--ink-faint);
+  user-select: text;
+}
+.hooks-diff span[data-sign="+"] {
+  color: var(--tone-low);
+}
+.hooks-diff span[data-sign="-"] {
+  color: var(--tone-bad);
+}
+.hooks-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.hooks-btn {
+  padding: 3px 9px;
+  border: 0;
+  border-radius: 5px;
+  background: rgb(255 255 255 / 0.08);
+  color: var(--ink);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  transition: background-color var(--dur-quick) ease;
+}
+.hooks-btn:hover:not(:disabled) {
+  background: rgb(255 255 255 / 0.14);
+}
+.hooks-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.hooks-btn-primary {
+  background: var(--accent);
+  color: #001014;
+  font-weight: 600;
+}
+.hooks-btn-primary:hover:not(:disabled) {
+  background: var(--accent);
+  filter: brightness(1.08);
 }
 
 /*

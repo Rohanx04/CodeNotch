@@ -24,7 +24,13 @@ Rust backend and a React frontend.
 
 The ring is both gauge and activity light: it fills as the limit burns down
 (green, then amber, then red), a cyan comet rides it while an agent is
-generating, and it pulses amber when one is blocked on a `[y/N]` prompt.
+generating, and it pulses amber when one is blocked on a `[y/N]` prompt. A
+badge on its corner says when an agent needs you, has finished, or is broken.
+
+With the optional [Claude Code hooks](#claude-code-hooks-optional) installed it
+goes further: the Claude Code card shows each step a session takes as it takes
+it, and a permission request appears on the notch with **Allow** and **Deny**,
+so you can answer it without leaving what you are doing.
 
 ## What it watches
 
@@ -45,7 +51,9 @@ quota up automatically if a future build starts caching one.
 Two rules hold across every adapter:
 
 - **Read-only.** Nothing is written to, locked, or modified in another tool's
-  state. The Cursor adapter parses the SQLite file format directly (including
+  state. (The one exception is opt-in and never silent: installing the Claude
+  Code hooks adds entries to `~/.claude/settings.json`, after showing you the
+  exact diff — see below.) The Cursor adapter parses the SQLite file format directly (including
   committed WAL frames) rather than opening a connection, so a running Cursor
   can never be disturbed and can never block us.
 - **No invented numbers.** A failed collection degrades to a visible status —
@@ -69,19 +77,24 @@ getting five things right:
 | Never steals focus from your IDE or terminal | `WS_EX_NOACTIVATE`, and `SWP_NOACTIVATE` on **every** move and resize |
 | Stays out of Alt+Tab and the taskbar | `WS_EX_TOOLWINDOW`, with `WS_EX_APPWINDOW` cleared |
 | Stays on top | `HWND_TOPMOST`, re-asserted on every poll (other topmost windows can displace it) |
-| Doesn't swallow clicks while resting | `WS_EX_TRANSPARENT` toggled as the popover opens and closes |
-| Opens on hover *despite* being click-through | the cursor is polled with `GetCursorPos` |
+| Never swallows a click meant for something else | click-through everywhere except over the strip and an open card |
+| Opens on hover *despite* being click-through | the cursor is polled with `GetCursorPos` at 60 Hz on its own thread |
+| Costs nothing while hidden | that thread parks on a condvar whenever the notch is hidden or tucked away |
+| Survives monitors changing | displays are re-checked twice a second and the notch re-docks |
 | Shows nothing but the notch | no window effect, no system backdrop, no frame border, no window rounding |
 
-That last row is the subtle one. A `WS_EX_TRANSPARENT` window receives no mouse
-messages at all — not even `mouseenter` — so a click-through notch can never be
-told the pointer arrived. Hover is therefore driven from Rust by polling the
-cursor against the window rectangle, which is what lets the notch be
-click-through and hoverable at the same time.
+The click rows are the subtle ones. While the notch is on screen its window is a
+fixed panel — the strip plus room for the tallest card beside it — so most of it
+is empty desktop. The webview reports the shapes it has actually painted, and
+the cursor poll clears `WS_EX_TRANSPARENT` only while the pointer is over one of
+them (with a 14 px margin, so the flag is already off by the time a moving
+pointer reaches a button). A `WS_EX_TRANSPARENT` window receives no mouse
+messages at all — not even `mouseenter` — so the same poll is what tells the
+notch the pointer arrived.
 
 The last row is the one that makes it look built in. The window is bigger than
-the notch — it has to hold the popover alongside the strip, and the silhouette
-tapers away at both ends — so anything the compositor draws against the *window
+the notch — it holds the card alongside the strip, and the silhouette tapers
+away at both ends — so anything the compositor draws against the *window
 rectangle* shows up as a panel around the notch rather than as part of it. An
 acrylic window effect frosts that whole rectangle and rims it in light;
 `DWMWCP_ROUND` rounds and outlines it; a system backdrop fills it. All three are
@@ -100,26 +113,72 @@ Clicking a provider card raises that tool's window via `SetForegroundWindow`,
 using the `AttachThreadInput` dance that Windows requires — without it the call
 silently no-ops and the taskbar button just flashes.
 
+**Hide when idle** (off by default) tucks the strip into the screen edge after
+a quiet spell and shrinks the window to a 4 px wake strip along the edge; moving
+the pointer onto it, or an agent starting, finishing or asking for permission,
+brings the notch straight back. **Esc** closes an open card while the notch has
+the keyboard; the notch never takes focus to get it.
+
 ## Motion
 
 The notch should read as one object that moves, not a set of panels that
-appear. Opening a card swells it out of the strip — from whichever edge the
-notch is docked to — and its contents rise in a short stagger behind it. Moving
-between rings is a different gesture: the card is already on screen, so it
-glides along the edge to the new ring with the tail tracking it, rather than
-replaying the entrance and blinking.
+appear. Because its window keeps one size the whole time it is on screen,
+nothing about the window has to change for anything to move, and it all runs
+from one animation loop that stops itself the moment nothing is moving:
 
-One constraint shapes all of it. The webview measures its own layout and reports
-it to Rust, which resizes the native window — so **animating any property that
-changes the laid-out size would fire a `SetWindowPos` every frame**. Motion is
-therefore transform, opacity and position only, never width or height, and the
-size is measured with `offsetWidth`/`offsetHeight` rather than
-`getBoundingClientRect`, whose result includes whatever transform is mid-flight.
-Measuring through the entrance transform reported the card up to 1.5% small,
-which briefly sized the window under its own contents.
+- **Opening and closing are different gestures.** A card springs out of the
+  strip (a damped spring: a little life on arrival) and closes on a fixed
+  340 ms curve with no overshoot, so it leaves cleanly. The close plays out in
+  full; pointing back at the card mid-close springs it open again.
+- **The card changes size by springing** when its content does, and **glides
+  along the edge** between rings with the tail tracking it, rather than
+  replaying its entrance.
+- **Content crossfades.** Switching between a usage card, settings and a
+  permission request fades the old view out and the new one in a beat later
+  with a slight overshoot; provider to provider it is quicker. On first open
+  the contents rise in a short stagger.
+- **Every change of state gets a gesture on its ring**: a hop out of the edge
+  when an agent starts waiting on you, a spin and a few sparks when one
+  finishes, a shake when something breaks. A badge pops onto the ring's corner
+  and a soft glow behind it takes the state's colour.
+- **Work in progress shimmers**, and the Claude Code card's live steps roll
+  through a three-line ticker that queues bursts instead of dropping them.
+- **A peek counts down**: a thin bar shrinks through its last seconds.
+- **On launch** the strip slides out of the edge and the arcs sweep up one
+  after another; auto-hide slides it back in.
+- **Short sound cues** (off in Settings): a card opening and closing, an agent
+  finishing, a permission request, a limit crossing 80 % or 100 %. They are
+  synthesised in code, not played from files.
 
 `prefers-reduced-motion` is honoured with a blanket rule rather than a list of
-selectors, so motion added later is covered by default.
+selectors, so motion added later is covered by default; the animation loop
+jumps straight to its targets instead of animating.
+
+## Claude Code hooks (optional)
+
+Transcripts say what a Claude Code session *was* doing, a poll late and by
+inference. Hooks say what it is doing now: which tool it is running on which
+file, that it is blocked on a permission prompt, that the turn just ended.
+
+Settings → **Claude Code hooks** → **Install hooks…** shows the exact diff to
+`%USERPROFILE%\.claude\settings.json` and where the dated backup will go;
+nothing is written until you press **Write settings.json** under that diff, and
+the write is refused if the file changed in the meantime. Other settings and
+other tools' hooks are left alone, and **Remove hooks…** takes out only
+CodeNotch's entries.
+
+The hooks run `codenotch-hook.exe`, a small relay copied to
+`%LOCALAPPDATA%\CodeNotch\bin\` at launch, which forwards each event over a
+per-user named pipe. **Claude Code is never blocked by it**: if CodeNotch is not
+running the relay exits at once, every step runs under a deadline, and only a
+permission request waits for an answer. That request shows on the notch with
+exactly what Allow authorises (`Bash · cargo publish`, not just `Bash`); one
+request at a time, and if nobody answers within 108 seconds — or the notch is
+paused or hidden — the terminal asks as usual. Nothing is ever approved without
+a click.
+
+**Pause** in the tray menu stops collection, peeks and sounds, and hands any
+permission request straight to the terminal. It lasts until you unpause or quit.
 
 ## Requirements
 
@@ -144,7 +203,8 @@ npm run tauri:dev
 The notch appears against the right edge of your primary monitor, one ring per
 provider. Hover a ring for its detail card; click one to bring that tool's
 window to the front. A tray icon appears alongside it: left-click peeks the HUD,
-right-click gives you show/hide, refresh, the config folder, and quit.
+right-click gives you show/hide, keep expanded, pause, refresh, the config
+folder, and quit.
 
 To produce an installer:
 
@@ -164,6 +224,12 @@ the fastest way to work on layout:
 npm run dev      # http://localhost:1420
 ```
 
+A few query switches stand in for the backend: `?approval` brings up a
+permission request, `?peek` an attention peek with its countdown, `?hide`
+auto-hide tucking the strip away, and `?gestures` cycles a ring through
+working, finished and waiting (and another through broken) so every reaction
+can be watched.
+
 ## Tests
 
 The collection logic lives in `codenotch-core`, a crate with no Tauri or GUI
@@ -171,8 +237,15 @@ dependency, so its tests run on any host:
 
 ```bash
 cd src-tauri/core
-cargo test          # 185 tests: adapters, SQLite reader, layout, config, collector
+cargo test          # 218 tests: adapters, SQLite reader, layout, config, collector, hooks
 cargo clippy --all-targets
+```
+
+The hook relay's parsing and output are tested the same way:
+
+```bash
+cd src-tauri
+cargo test -p codenotch-hook
 ```
 
 The SQLite reader is checked against databases produced by real SQLite —
@@ -190,8 +263,8 @@ platform:
 ```bash
 rustup target add x86_64-pc-windows-msvc
 cd src-tauri
-cargo check --target x86_64-pc-windows-msvc
-cargo clippy --target x86_64-pc-windows-msvc --all-targets
+cargo check --target x86_64-pc-windows-msvc --workspace
+cargo clippy --target x86_64-pc-windows-msvc --workspace --all-targets
 ```
 
 This works because the crate pulls in no C-compiled dependencies: TLS goes
@@ -221,11 +294,13 @@ corrupt file falls back to defaults rather than refusing to start).
 | `accent` | `#22d3ee` | Ring and border accent, `#rrggbb` |
 | `monitor` | `{"kind":"primary"}` | Or `{"kind":"index","index":1}` |
 | `alwaysExpanded` | `false` | Keep a detail card open rather than waiting for hover |
-| `clickThroughWhenCollapsed` | `true` | Let clicks fall through while resting |
 | `peekOnAttention` / `peekSecs` | `true` / `5` | Briefly expand when an agent finishes or needs you |
+| `autoHide` / `autoHideSecs` | `false` / `60` | Tuck the notch into the edge after this long with nothing going on |
+| `sound` / `soundVolume` | `true` / `0.12` | Sound cues, and their volume (0–0.2) |
 | `notifyOnThresholds` | `true` | Alert once at 80% and once at 100% per window |
 | `resetAsCountdown` | `true` | `1h 36m` rather than a clock time |
 | `launchAtLogin` | `false` | Adds an `HKCU\...\CurrentVersion\Run` entry |
+| `clickThroughWhenCollapsed` | `true` | Retired: click-through now follows the painted shapes. Still read, so old files load |
 | `poll.*` | 45–120s | Per-provider intervals, clamped to 5–3600s |
 | `providers.gemini` etc. | `true` | One switch per provider |
 | `providers` | all `true` | Turn individual providers off |
@@ -234,19 +309,28 @@ corrupt file falls back to defaults rather than refusing to start).
 ## Layout
 
 ```
-src/                      React frontend (pill, expanded card, settings)
+src/                      React frontend (strip, cards, settings)
+  lib/motion.ts           Springs and the close curve
+  lib/sound.ts            Synthesised sound cues
 src-tauri/
   src/
     platform/             Win32: styles, docking, DPI, focus, registry
-    hud.rs                Collapsed/expanded state and window placement
+    hud.rs                Window placement, hover and click-through, auto-hide
     commands.rs           The IPC surface
-    poll.rs               Background polling loop and attention peeks
+    poll.rs               Polling loop, live overlay, attention peeks and cues
+    hooks.rs              Claude Code hook install and events
+    approvals.rs          Permission requests answered from the notch
+    pipe.rs               The named pipe the hook relay talks to
     tray.rs               Tray icon and menu
+  hook/                   codenotch-hook -- the relay Claude Code runs
   core/                   codenotch-core -- no Tauri, fully unit-tested
     src/
       adapters/           One module per provider
       sqlite.rs           Read-only SQLite + WAL reader
-      layout.rs           Edge anchoring and DPI maths
+      layout.rs           Panel geometry, edge anchoring, DPI, hit testing
+      presence.rs         Auto-hide state machine
+      live.rs             Live Claude Code sessions from hook events
+      hook_settings.rs    Safe settings.json install (backup, merge, diff)
       collector.rs        Per-provider schedules, staleness, alerts
       model.rs            Domain types
 scripts/                  Icon and test-fixture generators
@@ -256,7 +340,9 @@ scripts/                  Icon and test-fixture generators
 
 Everything is local. The only network calls CodeNotch makes are to Anthropic's
 usage endpoint with your existing Claude Code token, and to your own Ollama
-daemon. No telemetry, no analytics, no third-party services. Credentials are
+daemon. Claude Code hook events travel over a named pipe on your own machine (remote
+connections are refused, and the relay checks the pipe belongs to your own
+account before sending anything) and are never stored. No telemetry, no analytics, no third-party services. Credentials are
 read but never copied, logged, or transmitted anywhere other than the provider
 they belong to — the Copilot adapter, for instance, reads `apps.json` only to
 learn *that* you are signed in and deliberately ignores the tokens beside it.
@@ -264,6 +350,13 @@ learn *that* you are signed in and deliberately ignores the tokens beside it.
 ## Licence
 
 MIT.
+
+Some of the motion and hook plumbing is adapted from
+[Coucou](https://github.com/Louis-CFM/coucou) by Louis Raillé, whose source
+code is MIT-licensed (`LICENSES/Coucou-MIT.txt`): the spring and close-curve
+helpers, the rolling step ticker, the hook relay and its named-pipe protocol,
+and the `settings.json` merge. Coucou's name, its Mochi character, its icon and
+its sounds are not part of that licence, and none of them are used here.
 
 Six of the seven provider marks on the strip come from [Simple
 Icons](https://simpleicons.org), whose icon data is released under CC0 1.0
