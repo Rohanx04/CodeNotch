@@ -384,6 +384,10 @@ pub struct Telemetry {
     pub activity: Activity,
     /// Worst health across the providers that have anything to say.
     pub health: Health,
+    /// Claude Code sessions reported live by the hooks, with their recent
+    /// steps. Empty unless the hooks are installed.
+    #[serde(default)]
+    pub live: Vec<crate::live::LiveSession>,
 }
 
 impl Telemetry {
@@ -413,6 +417,7 @@ impl Telemetry {
             peak_pct,
             activity,
             health,
+            live: Vec::new(),
         }
     }
 
@@ -423,11 +428,31 @@ impl Telemetry {
             peak_pct: None,
             activity: Activity::Idle,
             health: Health::Ok,
+            live: Vec::new(),
         }
     }
 
     pub fn get(&self, id: ProviderId) -> Option<&ProviderSnapshot> {
         self.providers.iter().find(|p| p.id == id)
+    }
+
+    /// The provider that just started needing the user, if any, and how.
+    ///
+    /// Transitions, not states: re-peeking every poll while something sits
+    /// blocked would be intolerable. Only *changes* count -- on the first
+    /// publish nothing is news, and a provider that just appeared has no
+    /// "before". Per provider, so one agent finishing is noticed even while
+    /// another is still working; a blocked agent outranks a finished one.
+    pub fn attention_since(&self, previous: &Telemetry) -> Option<(ProviderId, Activity)> {
+        self.providers
+            .iter()
+            .filter_map(|p| {
+                let before = previous.get(p.id)?.activity;
+                let news = p.activity != before
+                    && matches!(p.activity, Activity::AwaitingInput | Activity::Done);
+                news.then_some((p.id, p.activity))
+            })
+            .max_by_key(|(_, activity)| activity.rank())
     }
 }
 
@@ -628,5 +653,57 @@ mod tests {
         assert_eq!(snap.activity, Activity::Idle);
         assert_eq!(snap.sessions[0].activity, Activity::Idle);
         assert_eq!(snap.peak_pct(), Some(60.0));
+    }
+
+    fn with_activities(activities: &[(ProviderId, Activity)]) -> Telemetry {
+        Telemetry::from_snapshots(
+            activities
+                .iter()
+                .map(|(id, a)| {
+                    let mut p = ProviderSnapshot::new(*id);
+                    p.activity = *a;
+                    p
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn nothing_is_news_on_the_first_publish() {
+        let now = with_activities(&[(ProviderId::Codex, Activity::Done)]);
+        assert_eq!(now.attention_since(&Telemetry::empty()), None);
+    }
+
+    #[test]
+    fn one_agent_finishing_is_noticed_while_another_works() {
+        let before = with_activities(&[
+            (ProviderId::ClaudeCode, Activity::Generating),
+            (ProviderId::Codex, Activity::Generating),
+        ]);
+        let after = with_activities(&[
+            (ProviderId::ClaudeCode, Activity::Generating),
+            (ProviderId::Codex, Activity::Done),
+        ]);
+        assert_eq!(
+            after.attention_since(&before),
+            Some((ProviderId::Codex, Activity::Done))
+        );
+    }
+
+    #[test]
+    fn blocked_outranks_finished_and_steady_states_are_quiet() {
+        let before = with_activities(&[
+            (ProviderId::ClaudeCode, Activity::Generating),
+            (ProviderId::Codex, Activity::Generating),
+        ]);
+        let after = with_activities(&[
+            (ProviderId::ClaudeCode, Activity::AwaitingInput),
+            (ProviderId::Codex, Activity::Done),
+        ]);
+        assert_eq!(
+            after.attention_since(&before),
+            Some((ProviderId::ClaudeCode, Activity::AwaitingInput))
+        );
+        assert_eq!(after.attention_since(&after), None);
     }
 }

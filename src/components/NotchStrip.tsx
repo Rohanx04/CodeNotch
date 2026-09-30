@@ -5,20 +5,26 @@
  * The strip is flush against the edge and tapers away at both ends along the
  * curve in NotchShape — the join that makes it read as carved out of the
  * display rather than a panel floating on top of it.
+ *
+ * Its position and the auto-hide slide into the edge are driven from App's
+ * animation loop through `innerRef`, not from props, so they run at frame rate
+ * without re-rendering the rings.
  */
 
 import { useLayoutEffect, useRef, useState } from "react";
 import { Settings2 } from "lucide-react";
 
-import type { Edge, HudMetrics, ProviderSnapshot } from "../types";
+import type { Edge, HudMetrics, LiveSession, ProviderSnapshot } from "../types";
 import { NotchShape } from "./NotchShape";
 import { ProviderRing } from "./ProviderRing";
 
 interface Props {
   providers: ProviderSnapshot[];
+  live: LiveSession[];
   metrics: HudMetrics;
   edge: Edge;
   activeId: string | null;
+  paused: boolean;
   onHover: (provider: ProviderSnapshot | null) => void;
   onActivate: (provider: ProviderSnapshot) => void;
   onOpenSettings: () => void;
@@ -28,11 +34,18 @@ interface Props {
   innerRef?: React.Ref<HTMLDivElement>;
 }
 
+/** Stagger between rings in the launch sweep. */
+const INTRO_STAGGER_MS = 70;
+/** Let the strip slide out before the first arc starts filling. */
+const INTRO_START_MS = 220;
+
 export function NotchStrip({
   providers,
+  live,
   metrics,
   edge,
   activeId,
+  paused,
   onHover,
   onActivate,
   onOpenSettings,
@@ -50,15 +63,16 @@ export function NotchStrip({
   // what reserves room for the gear when the window is sized.
   const gearSize = Math.round(metrics.stripThickness * 0.55);
   const ringGap = Math.max(2, Math.round(metrics.ring * 0.16));
+  const claudeFailed = live.some((s) => s.failed && s.activity === "done");
 
   // The silhouette is drawn at exact pixel size, so it has to follow the strip
-  // as rings come and go.
+  // as rings come and go. `offset*`, not the bounding rect: the strip is often
+  // mid-slide, and the rect would include the transform.
   useLayoutEffect(() => {
     const node = shellRef.current;
     if (!node) return;
     const measure = () => {
-      const box = node.getBoundingClientRect();
-      setShell({ width: Math.ceil(box.width), height: Math.ceil(box.height) });
+      setShell({ width: Math.ceil(node.offsetWidth), height: Math.ceil(node.offsetHeight) });
     };
     measure();
     const observer = new ResizeObserver(measure);
@@ -77,6 +91,7 @@ export function NotchStrip({
       }}
       className="notch-strip"
       data-edge={edge}
+      data-paused={paused || undefined}
       style={
         {
           [vertical ? "width" : "height"]: metrics.stripThickness,
@@ -99,7 +114,7 @@ export function NotchStrip({
         className="notch-rings"
         style={{ flexDirection: vertical ? "column" : "row" }}
       >
-        {providers.map((provider) => (
+        {providers.map((provider, index) => (
           <span
             key={provider.id}
             className="ring-cell"
@@ -108,7 +123,10 @@ export function NotchStrip({
             <ProviderRing
               provider={provider}
               size={metrics.ring}
+              edge={edge}
               active={activeId === provider.id}
+              failed={provider.id === "claudeCode" && claudeFailed}
+              introDelay={INTRO_START_MS + index * INTRO_STAGGER_MS}
               onHover={onHover}
               onActivate={onActivate}
             />

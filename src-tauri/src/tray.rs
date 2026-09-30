@@ -12,6 +12,7 @@ use crate::commands::app_state;
 
 const ID_SHOW: &str = "toggle-visible";
 const ID_PIN: &str = "toggle-pin";
+const ID_PAUSE: &str = "toggle-pause";
 const ID_REFRESH: &str = "refresh";
 const ID_SETTINGS: &str = "open-config";
 const ID_QUIT: &str = "quit";
@@ -24,6 +25,10 @@ pub fn build(app: &AppHandle) -> Result<()> {
 
     let show = CheckMenuItem::with_id(app, ID_SHOW, "Show notch", true, !hidden, None::<&str>)?;
     let pin = MenuItem::with_id(app, ID_PIN, "Keep expanded", true, None::<&str>)?;
+    // Pause: no collection, no peeks, no sounds, and permission requests go
+    // straight to the terminal. Not persisted, so a forgotten pause cannot
+    // silently outlive a restart.
+    let pause = CheckMenuItem::with_id(app, ID_PAUSE, "Pause", true, false, None::<&str>)?;
     let refresh = MenuItem::with_id(app, ID_REFRESH, "Refresh now", true, None::<&str>)?;
     let settings = MenuItem::with_id(app, ID_SETTINGS, "Open config folder", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, ID_QUIT, "Quit CodeNotch", true, None::<&str>)?;
@@ -33,6 +38,7 @@ pub fn build(app: &AppHandle) -> Result<()> {
         &[
             &show,
             &pin,
+            &pause,
             &PredefinedMenuItem::separator(app)?,
             &refresh,
             &settings,
@@ -65,6 +71,22 @@ pub fn build(app: &AppHandle) -> Result<()> {
                         let _ = state.hud.toggle_pin();
                     }
                 }
+                ID_PAUSE => {
+                    if let Some(state) = app.try_state::<crate::commands::AppState>() {
+                        let paused = !state.hud.paused();
+                        let _ = state.hud.set_paused(paused);
+                        let _ = pause.set_checked(paused);
+                        if paused {
+                            // Anything on the notch goes back to the terminal.
+                            state.approvals.release();
+                        } else {
+                            // Catch up at once rather than at the next tick.
+                            tauri::async_runtime::spawn(async move {
+                                crate::poll::refresh(&handle).await;
+                            });
+                        }
+                    }
+                }
                 ID_REFRESH => {
                     // The command is async; spawn so the menu handler returns.
                     tauri::async_runtime::spawn(async move {
@@ -89,7 +111,8 @@ pub fn build(app: &AppHandle) -> Result<()> {
             {
                 if let Some(state) = tray.app_handle().try_state::<crate::commands::AppState>() {
                     let _ = state.hud.set_hidden(false);
-                    let _ = state.hud.peek(std::time::Duration::from_secs(6));
+                    let _ = state.hud.wake();
+                    let _ = state.hud.peek(std::time::Duration::from_secs(6), None);
                 }
             }
         })

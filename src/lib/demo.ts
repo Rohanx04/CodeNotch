@@ -7,7 +7,8 @@
  * signed-out provider and one that isn't installed.
  */
 
-import type { Bootstrap, Config, HudMetrics, Telemetry } from "../types";
+import type { ApprovalRequest, Bootstrap, Config, HudMetrics, LiveSession, Telemetry } from "../types";
+import { panelSize, stripOffset } from "./layout";
 
 const now = Date.now();
 const iso = (offsetMs: number) => new Date(now + offsetMs).toISOString();
@@ -37,6 +38,10 @@ export const DEMO_CONFIG: Config = {
   notifyOnThresholds: true,
   resetAsCountdown: true,
   launchAtLogin: false,
+  autoHide: false,
+  autoHideSecs: 60,
+  sound: true,
+  soundVolume: 0.12,
   poll: {
     claudeSecs: 90,
     cursorSecs: 45,
@@ -68,11 +73,46 @@ export const DEMO_CONFIG: Config = {
   ollamaUrl: "http://127.0.0.1:11434",
 };
 
+/** A live Claude Code session, as the hooks would report it. */
+export const DEMO_LIVE: LiveSession[] = [
+  {
+    id: "a2",
+    project: "billing-api",
+    cwd: "C:\\dev\\billing-api",
+    activity: "generating",
+    steps: ["add retries to the webhook client", "Read · client.rs", "Search · fn send"],
+    stepCount: 3,
+    lastEvent: iso(-2_000),
+    failed: false,
+  },
+];
+
+/** Steps the preview feeds the ticker, so it can be seen rolling. */
+export const DEMO_STEPS = [
+  "Edit · client.rs",
+  "Run · cargo test -p billing",
+  "Read · retry.rs",
+  "Edit · retry.rs",
+  "Run · cargo clippy",
+  "Search · Backoff::new",
+];
+
+/** A permission request, for previewing the approval card (`?approval`). */
+export const DEMO_APPROVAL: ApprovalRequest = {
+  id: "demo-1",
+  sessionId: "a1",
+  project: "codenotch",
+  tool: "Bash",
+  target: "Bash · cargo publish --package codenotch-core",
+  expiresAt: now + 108_000,
+};
+
 export const DEMO_TELEMETRY: Telemetry = {
   generatedAt: iso(0),
   peakPct: 86,
   activity: "awaitingInput",
   health: "rateLimited",
+  live: DEMO_LIVE,
   providers: [
     {
       id: "claudeCode",
@@ -127,7 +167,7 @@ export const DEMO_TELEMETRY: Telemetry = {
           activity: "generating",
           lastActivity: iso(-4_000),
           tokens: 42_100,
-          detail: null,
+          detail: "Search · fn send",
         },
       ],
     },
@@ -316,19 +356,34 @@ export const DEMO_TELEMETRY: Telemetry = {
   ],
 };
 
+/** Rings the demo shows: every provider that isn't "unavailable". */
+const DEMO_RINGS = DEMO_TELEMETRY.providers.filter((p) => p.health !== "unavailable").length;
+const DEMO_PANEL = panelSize(DEMO_METRICS, "right", DEMO_RINGS);
+const DEMO_STRIP = stripOffset(DEMO_METRICS, "right", DEMO_RINGS);
+
 export const DEMO_BOOTSTRAP: Bootstrap = {
   config: DEMO_CONFIG,
   telemetry: DEMO_TELEMETRY,
   hud: {
     open: false,
+    hovering: false,
     pinned: false,
     hidden: false,
     peeking: false,
-    width: DEMO_METRICS.stripThickness,
-    height: DEMO_METRICS.stripPadding * 2 + 5 * DEMO_METRICS.slot,
+    peekEndsAt: null,
+    focus: null,
+    alert: false,
+    retracted: false,
+    wake: false,
+    paused: false,
+    width: DEMO_PANEL.width,
+    height: DEMO_PANEL.height,
+    stripX: DEMO_STRIP.x,
+    stripY: DEMO_STRIP.y,
   },
   metrics: DEMO_METRICS,
   edge: "right",
   version: "0.1.0-demo",
   nativeWindow: false,
+  approval: null,
 };

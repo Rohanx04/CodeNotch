@@ -3,6 +3,7 @@
 import { ArrowLeft, FolderOpen, Power } from "lucide-react";
 
 import type { Config, Edge, HudSize, MonitorInfo, ProviderId } from "../types";
+import { HooksPanel } from "./HooksPanel";
 
 const EDGES: { value: Edge; label: string }[] = [
   { value: "top", label: "Top" },
@@ -15,6 +16,12 @@ const SIZES: { value: HudSize; label: string }[] = [
   { value: "small", label: "S" },
   { value: "medium", label: "M" },
   { value: "large", label: "L" },
+];
+
+const HIDE_AFTER: { value: string; label: string }[] = [
+  { value: "30", label: "30s" },
+  { value: "60", label: "1m" },
+  { value: "300", label: "5m" },
 ];
 
 const ACCENTS = ["#22d3ee", "#a78bfa", "#34d399", "#fbbf24", "#fb7185", "#60a5fa"];
@@ -213,15 +220,6 @@ export function SettingsPanel({
             onChange={(alwaysExpanded) => patch({ alwaysExpanded })}
           />
         </Row>
-        <Row label="Click through when resting">
-          <Toggle
-            label="Click through when resting"
-            checked={config.clickThroughWhenCollapsed}
-            onChange={(clickThroughWhenCollapsed) =>
-              patch({ clickThroughWhenCollapsed })
-            }
-          />
-        </Row>
         <Row label="Peek when an agent needs you">
           <Toggle
             label="Peek when an agent needs you"
@@ -250,6 +248,55 @@ export function SettingsPanel({
             onChange={(launchAtLogin) => patch({ launchAtLogin })}
           />
         </Row>
+        <Row label="Hide when idle">
+          <Toggle
+            label="Hide when idle"
+            checked={config.autoHide}
+            onChange={(autoHide) => patch({ autoHide })}
+          />
+        </Row>
+        {config.autoHide && (
+          <Row label="Hide after">
+            <SegmentedControl
+              value={String(config.autoHideSecs)}
+              options={
+                HIDE_AFTER.some((o) => o.value === String(config.autoHideSecs))
+                  ? HIDE_AFTER
+                  : [
+                      ...HIDE_AFTER,
+                      { value: String(config.autoHideSecs), label: `${config.autoHideSecs}s` },
+                    ]
+              }
+              onChange={(value) => patch({ autoHideSecs: Number(value) })}
+            />
+          </Row>
+        )}
+        <Row label="Sounds">
+          <Toggle
+            label="Sounds"
+            checked={config.sound}
+            onChange={(sound) => patch({ sound })}
+          />
+        </Row>
+        {config.sound && (
+          <Row label="Volume">
+            <input
+              type="range"
+              min={0}
+              max={0.2}
+              step={0.01}
+              value={config.soundVolume}
+              onChange={(e) => patch({ soundVolume: Number(e.target.value) })}
+              className="h-1 w-[110px] shrink-0 cursor-pointer accent-[var(--accent)]"
+              aria-label="Volume"
+            />
+          </Row>
+        )}
+
+        <div className="my-1 h-px bg-white/8" />
+
+        <p className="py-1 text-[10px] text-notch-faint">Claude Code hooks</p>
+        <HooksPanel />
 
         <div className="my-1 h-px bg-white/8" />
 

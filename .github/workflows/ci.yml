@@ -40,6 +40,12 @@ jobs:
         working-directory: src-tauri/core
         run: cargo test --all-features
 
+      # The Claude Code hook relay is plain Rust with a Win32 corner, so its
+      # parsing and output tests run everywhere too.
+      - name: Test the hook relay
+        working-directory: src-tauri
+        run: cargo test -p codenotch-hook
+
       - name: Clippy
         working-directory: src-tauri/core
         run: cargo clippy --all-targets -- -D warnings
@@ -86,13 +92,14 @@ jobs:
           llvm-rc /? >/dev/null 2>&1 || true
           command -v llvm-rc
 
+      # `--workspace` so the hook relay's Win32 code is checked as well as the app.
       - name: Check
         working-directory: src-tauri
-        run: cargo check --target x86_64-pc-windows-msvc --all-targets
+        run: cargo check --target x86_64-pc-windows-msvc --workspace --all-targets
 
       - name: Clippy
         working-directory: src-tauri
-        run: cargo clippy --target x86_64-pc-windows-msvc --all-targets -- -D warnings
+        run: cargo clippy --target x86_64-pc-windows-msvc --workspace --all-targets -- -D warnings
 
   frontend:
     name: frontend

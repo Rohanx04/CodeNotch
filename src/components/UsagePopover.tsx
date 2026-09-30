@@ -2,12 +2,12 @@
  * The detail card that opens beside a hovered ring.
  *
  * One block per usage window: what it counts and when it resets on the top
- * line, a bar, then the percentage. A tail on the edge nearest the strip points
- * back at the ring it belongs to, so with several rings stacked up it is always
- * obvious which one you are reading.
+ * line, a bar, then the percentage. When the Claude Code hooks are installed,
+ * a live ticker underneath shows what the current session is doing, step by
+ * step.
  */
 
-import type { Config, Edge, ProviderSnapshot } from "../types";
+import type { Config, Edge, LiveSession, ProviderSnapshot } from "../types";
 import {
   activityLabel,
   formatAgo,
@@ -15,16 +15,15 @@ import {
   healthLabel,
   windowValue,
 } from "../lib/format";
+import { projectColour } from "../lib/layout";
 import { BrandIcon } from "./BrandIcon";
+import { StepTicker } from "./StepTicker";
 
 interface Props {
   provider: ProviderSnapshot;
   config: Config;
-  edge: Edge;
-  /** Centre of the ring this belongs to, in window coordinates. */
-  anchor: number;
-  /** Strip thickness: the tail is drawn in proportion to it. */
-  thickness: number;
+  /** Live Claude Code sessions, from the hooks. */
+  live: LiveSession[];
   onFocusProvider: (provider: ProviderSnapshot, titleHint?: string | null) => void;
 }
 
@@ -40,8 +39,12 @@ const TAIL_LENGTH = 0.4;
 const TAIL_HALF = 0.33;
 const TAIL_CONTROL = 0.46;
 
-/** The tail as an SVG, pointing away from the card towards the strip. */
-function Tail({ edge, thickness }: { edge: Edge; thickness: number }) {
+/**
+ * The tail, pointing from the card back at the ring it belongs to. Its
+ * position along the card comes from `--tail-offset`, which App's animation
+ * loop sets as the card glides between rings.
+ */
+export function CardTail({ edge, thickness }: { edge: Edge; thickness: number }) {
   const length = Math.round(thickness * TAIL_LENGTH);
   const half = Math.round(thickness * TAIL_HALF);
   const c = half * (1 - TAIL_CONTROL);
@@ -78,28 +81,27 @@ function Tail({ edge, thickness }: { edge: Edge; thickness: number }) {
   );
 }
 
-export function UsagePopover({
-  provider,
-  config,
-  edge,
-  anchor,
-  thickness,
-  onFocusProvider,
-}: Props) {
+/** The live session worth watching: blocked, then working, then most recent. */
+function liveFocus(live: LiveSession[]): LiveSession | null {
+  const rank = { awaitingInput: 3, generating: 2, done: 1, idle: 0 } as const;
+  return (
+    [...live]
+      .filter((s) => s.steps.length > 0)
+      .sort(
+        (a, b) =>
+          rank[b.activity] - rank[a.activity] ||
+          new Date(b.lastEvent).getTime() - new Date(a.lastEvent).getTime(),
+      )[0] ?? null
+  );
+}
+
+export function UsagePopover({ provider, config, live, onFocusProvider }: Props) {
   const health = healthLabel(provider.health);
   const activity = activityLabel(provider.activity);
+  const ticker = provider.id === "claudeCode" ? liveFocus(live) : null;
 
   return (
-    <div
-      className="popover"
-      data-edge={edge}
-      // The tail tracks the ring; everything else stays put.
-      style={{ "--tail-offset": `${anchor}px` } as React.CSSProperties}
-      role="dialog"
-      aria-label={`${provider.name} usage`}
-    >
-      <Tail edge={edge} thickness={thickness} />
-
+    <div className="popover" role="dialog" aria-label={`${provider.name} usage`}>
       <header className="popover-head">
         <BrandIcon provider={provider.id} className="popover-mark" />
         {/* Just the name: at notch width "Claude Code Usage" truncates, and the
@@ -108,7 +110,7 @@ export function UsagePopover({
         <span className="popover-title">{provider.name}</span>
         {activity && (
           <span
-            className="popover-activity"
+            className={`popover-activity${provider.activity === "generating" ? " shimmer" : ""}`}
             data-state={provider.activity}
           >
             {activity}
@@ -165,6 +167,20 @@ export function UsagePopover({
         <p className="popover-note">{provider.detail}</p>
       )}
 
+      {ticker && (
+        <div className="popover-live">
+          <span className="popover-live-label">
+            <i style={{ background: projectColour(ticker.project) }} />
+            {ticker.project}
+          </span>
+          <StepTicker
+            steps={ticker.steps}
+            stepCount={ticker.stepCount}
+            sessionId={ticker.id}
+          />
+        </div>
+      )}
+
       {provider.sessions.length > 0 && (
         <div className="popover-sessions">
           {provider.sessions.slice(0, 3).map((session) => (
@@ -175,8 +191,15 @@ export function UsagePopover({
               onClick={() => onFocusProvider(provider, session.cwd ?? session.title)}
             >
               <span className="session-dot" data-state={session.activity} />
+              <span
+                className="session-project"
+                style={{ background: projectColour(session.title) }}
+                aria-hidden
+              />
               <span className="session-title">{session.title}</span>
-              <span className="session-meta tnum">
+              <span
+                className={`session-meta tnum${session.activity === "generating" && session.detail ? " shimmer" : ""}`}
+              >
                 {session.detail ?? formatAgo(session.lastActivity) ?? ""}
               </span>
             </button>

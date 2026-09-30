@@ -200,7 +200,12 @@ pub struct Config {
     pub always_expanded: bool,
     /// Hide the HUD entirely (tray icon stays).
     pub hidden: bool,
-    /// Let clicks fall through to the window underneath while collapsed.
+    /// Retired, kept only so older config files round-trip unchanged.
+    ///
+    /// The window is now always click-through except over the shapes it
+    /// paints (the strip, and the card while one is open), which is what this
+    /// setting used to approximate by making the whole resting window
+    /// click-through. See `layout::hit_test`.
     pub click_through_when_collapsed: bool,
     /// Briefly expand when an agent finishes or starts waiting for input.
     pub peek_on_attention: bool,
@@ -212,6 +217,16 @@ pub struct Config {
     pub reset_as_countdown: bool,
     /// Start CodeNotch when the user signs in (HKCU ...\Run).
     pub launch_at_login: bool,
+    /// Tuck the notch into the screen edge when nothing is happening.
+    pub auto_hide: bool,
+    /// Seconds of quiet before auto-hide tucks the notch away.
+    pub auto_hide_secs: u64,
+    /// Short synthesised cues: a card opening, an agent finishing, a
+    /// permission request arriving.
+    pub sound: bool,
+    /// Master volume for the cues, 0.0..=0.2 (the cues are mixed hot, so the
+    /// useful range is small).
+    pub sound_volume: f32,
 
     pub poll: PollConfig,
     /// Per-provider on/off, keyed by [`ProviderId::key`].
@@ -241,6 +256,10 @@ impl Default for Config {
             notify_on_thresholds: true,
             reset_as_countdown: true,
             launch_at_login: false,
+            auto_hide: false,
+            auto_hide_secs: 60,
+            sound: true,
+            sound_volume: 0.12,
 
             poll: PollConfig::default(),
             providers: ProviderId::ALL
@@ -315,10 +334,16 @@ impl Config {
     }
 
     /// Clamp anything that could push the HUD off-screen or spin the poller.
-    fn sanitised(mut self) -> Self {
+    pub fn sanitised(mut self) -> Self {
         self.edge_offset = self.edge_offset.clamp(0.0, 1.0);
         self.margin = self.margin.clamp(0.0, 400.0);
         self.peek_secs = self.peek_secs.clamp(1, 60);
+        self.auto_hide_secs = self.auto_hide_secs.clamp(5, 3600);
+        self.sound_volume = if self.sound_volume.is_finite() {
+            self.sound_volume.clamp(0.0, 0.2)
+        } else {
+            Config::default().sound_volume
+        };
         self.accent = self.accent_hex();
         if self.ollama_url.trim().is_empty() {
             self.ollama_url = Config::default().ollama_url;
@@ -415,6 +440,18 @@ mod tests {
         assert_eq!(cfg.edge_offset, 1.0);
         assert_eq!(cfg.margin, 0.0);
         assert_eq!(cfg.peek_secs, 60);
+    }
+
+    #[test]
+    fn new_settings_default_sensibly_and_clamp() {
+        let cfg: Config = serde_json::from_str("{}").unwrap();
+        assert!(!cfg.auto_hide, "auto-hide is opt-in");
+        assert!(cfg.sound);
+        let cfg: Config =
+            serde_json::from_str(r#"{"autoHideSecs": 1, "soundVolume": 3.0}"#).unwrap();
+        let cfg = cfg.sanitised();
+        assert_eq!(cfg.auto_hide_secs, 5);
+        assert_eq!(cfg.sound_volume, 0.2);
     }
 
     #[test]

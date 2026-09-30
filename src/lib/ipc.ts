@@ -9,8 +9,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type {
+  ApprovalRequest,
   Bootstrap,
   Config,
+  Cue,
+  HitRect,
+  HookPreview,
+  HookStatus,
   HudState,
   MonitorInfo,
   ProviderId,
@@ -20,6 +25,8 @@ import type {
 export const TELEMETRY_EVENT = "codenotch://telemetry";
 export const CONFIG_EVENT = "codenotch://config";
 export const HUD_STATE_EVENT = "codenotch://hud-state";
+export const APPROVAL_EVENT = "codenotch://approval";
+export const CUE_EVENT = "codenotch://cue";
 
 /** True when running inside the Tauri shell rather than a bare browser. */
 export const IN_TAURI =
@@ -44,8 +51,9 @@ async function call<T>(command: string, args?: Record<string, unknown>): Promise
 export const ipc = {
   ready: () => call<Bootstrap>("hud_ready"),
   hover: (hovering: boolean) => call<void>("hud_hover", { hovering }),
-  setContentSize: (width: number, height: number) =>
-    call<void>("hud_set_content_size", { width, height }),
+  setHitRects: (rects: HitRect[]) => call<void>("hud_set_hit_rects", { rects }),
+  wake: () => call<void>("hud_wake"),
+  dismiss: () => call<void>("hud_dismiss"),
   togglePin: () => call<boolean>("hud_toggle_pin"),
   getConfig: () => call<Config>("get_config"),
   setConfig: (config: Config) => call<Config>("set_config", { config }),
@@ -57,7 +65,23 @@ export const ipc = {
   listMonitors: () => call<MonitorInfo[]>("list_monitors"),
   openConfigDir: () => call<void>("open_config_dir"),
   quit: () => call<void>("quit_app"),
+  hooksStatus: () => call<HookStatus>("hooks_status"),
+  hooksPreview: (install: boolean) => callOrThrow<HookPreview>("hooks_preview", { install }),
+  hooksApply: (install: boolean, fingerprint: string) =>
+    callOrThrow<string>("hooks_apply", { install, fingerprint }),
+  approvalAck: (id: string) => call<void>("approval_ack", { id }),
+  approvalDecide: (id: string, decision: "allow" | "deny") =>
+    call<void>("approval_decide", { id, decision }),
 };
+
+/**
+ * Call a command and let its error through. For the few actions where the
+ * user has to hear why something did not happen (writing settings.json).
+ */
+async function callOrThrow<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  if (!IN_TAURI) throw new Error("Only available in the desktop app.");
+  return invoke<T>(command, args);
+}
 
 /** Subscribe to a backend event; returns an unsubscribe function. */
 export function subscribe<T>(
@@ -74,4 +98,7 @@ export const events = {
   config: (handler: (c: Config) => void) => subscribe<Config>(CONFIG_EVENT, handler),
   hudState: (handler: (s: HudState) => void) =>
     subscribe<HudState>(HUD_STATE_EVENT, handler),
+  approval: (handler: (a: ApprovalRequest | null) => void) =>
+    subscribe<ApprovalRequest | null>(APPROVAL_EVENT, handler),
+  cue: (handler: (c: Cue) => void) => subscribe<Cue>(CUE_EVENT, handler),
 };

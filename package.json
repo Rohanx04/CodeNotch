@@ -10,8 +10,9 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "tauri": "tauri",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:dev": "npm run hook:build && tauri dev",
+    "tauri:build": "tauri build --config src-tauri/tauri.bundle.conf.json",
+    "hook:build": "cargo build --release --manifest-path src-tauri/Cargo.toml -p codenotch-hook"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.9.0",
